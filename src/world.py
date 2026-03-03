@@ -174,9 +174,9 @@ class World:
           9. Player character
          10. Night darkness overlay
         """
-        # 1. Sky (fills behind everything — in case the world doesn't fully cover screen)
+        # 1. Sky gradient (darker at zenith, lighter at horizon)
         sky_colour = self._get_sky_colour()
-        surface.fill(sky_colour)
+        _draw_sky_gradient(surface, sky_colour)
 
         # 2 & 3. Tilemap (ground + farm soil)
         self.tilemap.draw(surface, self.camera)
@@ -184,7 +184,18 @@ class World:
         # 4. Crops
         self.crop_mgr.draw(surface, self.camera)
 
-        # 5. Trees and bushes
+        # 5a. Tree/bush drop shadows (drawn before canopy so they appear on ground)
+        for (col, row, kind) in self._trees:
+            wx = col * TILE_SIZE
+            wy = row * TILE_SIZE
+            if self.camera.is_visible(wx, wy, TILE_SIZE * 2, TILE_SIZE * 3):
+                sx, sy = self.camera.apply(wx, wy)
+                if kind == "tree":
+                    _draw_tree_shadow(surface, int(sx), int(sy))
+                elif kind == "bush":
+                    _draw_bush_shadow(surface, int(sx), int(sy))
+
+        # 5b. Trees and bushes
         for (col, row, kind) in self._trees:
             wx = col * TILE_SIZE
             wy = row * TILE_SIZE
@@ -211,7 +222,7 @@ class World:
             sx, sy = self.camera.apply(fx, fy)
             _draw_flagpole(surface, int(sx), int(sy), self.time_of_day)
 
-        # 8. Sell-zone marker (a simple market table visual)
+        # 8. Sell-zone marker
         szx = self._sell_zone_col * TILE_SIZE
         szy = self._sell_zone_row * TILE_SIZE
         if self.camera.is_visible(szx, szy, TILE_SIZE * 2, TILE_SIZE * 2):
@@ -221,7 +232,10 @@ class World:
         # 9. Player
         self.player.draw(surface, self.camera)
 
-        # 10. Night overlay (semi-transparent dark layer at night)
+        # 10. Ambient colour tint (warm at dawn/dusk, cool at night)
+        self._draw_ambient_tint(surface)
+
+        # 11. Night darkness overlay
         self._draw_night_overlay(surface)
 
     # ------------------------------------------------------------------
@@ -280,6 +294,30 @@ class World:
             overlay.fill((*C_NIGHT_OVERLAY, alpha))
             surface.blit(overlay, (0, 0))
 
+    def _draw_ambient_tint(self, surface: pygame.Surface):
+        """
+        Overlay a subtle warm/cool colour tint on the world to simulate
+        atmospheric lighting changes throughout the day.
+        Dawn/dusk: warm orange-gold wash; day: nothing; night: handled elsewhere.
+        """
+        t = self.time_of_day
+        tint_col = None
+        alpha = 0
+
+        if TIME_DAWN <= t < TIME_DAY:
+            f = (t - TIME_DAWN) / (TIME_DAY - TIME_DAWN)
+            alpha = int(55 * (1.0 - abs(f - 0.5) * 2))   # peaks mid-transition
+            tint_col = (255, 160, 60)   # warm golden dawn
+        elif TIME_DUSK <= t < TIME_NIGHT:
+            f = (t - TIME_DUSK) / (TIME_NIGHT - TIME_DUSK)
+            alpha = int(65 * math.sin(f * math.pi))       # peaks mid-dusk
+            tint_col = (220, 90, 40)    # warm red-orange dusk
+
+        if tint_col and alpha > 0:
+            tint = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            tint.fill((*tint_col, alpha))
+            surface.blit(tint, (0, 0))
+
     def get_time_string(self) -> str:
         """Return the in-game time as a human-readable "HH:MM" string."""
         # Map 0.0–1.0 to 0–24 hours
@@ -292,6 +330,41 @@ class World:
 # ---------------------------------------------------------------------------
 # Static drawing helpers (farmhouse, flagpole, trees, etc.)
 # ---------------------------------------------------------------------------
+
+def _draw_sky_gradient(surface: pygame.Surface, sky_colour: tuple):
+    """
+    Draw a vertical gradient sky: darker/richer at the zenith, lighter at the horizon.
+    Uses 4-pixel strips for a smooth look at low cost.
+    """
+    w = surface.get_width()
+    h = surface.get_height()
+    # Zenith is darker and more saturated; horizon is lighter and slightly warmer
+    top = (max(0, sky_colour[0] - 50), max(0, sky_colour[1] - 28), min(255, sky_colour[2] + 18))
+    bot = (min(255, sky_colour[0] + 22), min(255, sky_colour[1] + 18), max(0, sky_colour[2] - 8))
+    strip = 4
+    for y in range(0, h, strip):
+        t = y / h
+        r = int(top[0] + (bot[0] - top[0]) * t)
+        g = int(top[1] + (bot[1] - top[1]) * t)
+        b = int(top[2] + (bot[2] - top[2]) * t)
+        pygame.draw.rect(surface, (r, g, b), (0, y, w, strip))
+
+
+def _draw_tree_shadow(surface: pygame.Surface, sx: int, sy: int):
+    """Draw a soft elliptical drop-shadow under a tree."""
+    T = TILE_SIZE
+    sh = pygame.Surface((T * 2 + 10, T // 2 + 8), pygame.SRCALPHA)
+    pygame.draw.ellipse(sh, (0, 0, 0, 52), sh.get_rect())
+    surface.blit(sh, (sx - 5, sy + int(T * 2.05)))
+
+
+def _draw_bush_shadow(surface: pygame.Surface, sx: int, sy: int):
+    """Draw a soft elliptical drop-shadow under a bush."""
+    T = TILE_SIZE
+    sh = pygame.Surface((T, T // 4 + 6), pygame.SRCALPHA)
+    pygame.draw.ellipse(sh, (0, 0, 0, 46), sh.get_rect())
+    surface.blit(sh, (sx, sy + T - 8))
+
 
 def _draw_farmhouse(surface: pygame.Surface, sx: int, sy: int, w: int, h: int):
     """
@@ -306,111 +379,150 @@ def _draw_farmhouse(surface: pygame.Surface, sx: int, sy: int, w: int, h: int):
     w, h   — pixel width and height of the house footprint
     """
     T = TILE_SIZE
-
-    # ---- Roof (top 55% of the building) ----
     roof_h = int(h * 0.55)
-    roof_rect = pygame.Rect(sx, sy, w, roof_h)
-    pygame.draw.rect(surface, C_ROOF, roof_rect)
 
-    # Roof ridge line (slightly lighter along the top)
-    pygame.draw.rect(surface, _lighten(C_ROOF, 30), (sx, sy, w, 6))
+    # ---- Roof ----
+    pygame.draw.rect(surface, C_ROOF, (sx, sy, w, roof_h))
+    # Shingle rows — subtle horizontal lines with slight colour variation
+    for ry in range(sy + 8, sy + roof_h - 4, 8):
+        row_dark = _darken(C_ROOF, 10 + (ry - sy) // 12)
+        pygame.draw.line(surface, row_dark, (sx + 2, ry), (sx + w - 2, ry), 1)
+    # Ridge (bright capping strip)
+    pygame.draw.rect(surface, _lighten(C_ROOF, 38), (sx, sy, w, 5))
+    pygame.draw.rect(surface, _lighten(C_ROOF, 20), (sx, sy + 5, w, 3))
+    # Overhang drip-shadow
+    pygame.draw.rect(surface, _darken(C_ROOF, 35), (sx, sy + roof_h - 6, w, 8))
 
-    # Roof edge (overhang shadow along the bottom of the roof)
-    pygame.draw.rect(surface, C_ROOF_EDGE, (sx, sy + roof_h - 4, w, 6))
-
-    # Chimney (left side of roof)
+    # ---- Chimney ----
     chimney_x = sx + int(w * 0.2)
     chimney_w = int(w * 0.08)
-    chimney_h = int(h * 0.15)
+    chimney_h = int(h * 0.18)
+    # Side shadow
+    pygame.draw.rect(surface, _darken(C_CHIMNEY, 30),
+                     (chimney_x - 2, sy - chimney_h + 6, chimney_w + 4, chimney_h + 8))
+    # Main body
     pygame.draw.rect(surface, C_CHIMNEY,
-                     (chimney_x, sy - chimney_h + 8, chimney_w, chimney_h + 8))
-    # Chimney cap
-    pygame.draw.rect(surface, _darken(C_CHIMNEY, 20),
-                     (chimney_x - 4, sy - chimney_h + 6, chimney_w + 8, 8))
-    # Chimney smoke dots (decorative)
-    pygame.draw.circle(surface, (180, 175, 170, 120),
-                       (chimney_x + chimney_w // 2, sy - chimney_h - 4), 6)
-    pygame.draw.circle(surface, (160, 155, 150, 80),
-                       (chimney_x + chimney_w // 2 + 4, sy - chimney_h - 14), 5)
+                     (chimney_x, sy - chimney_h + 8, chimney_w, chimney_h + 6))
+    # Brick lines
+    for bi in range(0, chimney_h, 9):
+        pygame.draw.line(surface, _darken(C_CHIMNEY, 20),
+                         (chimney_x, sy - chimney_h + 8 + bi),
+                         (chimney_x + chimney_w - 1, sy - chimney_h + 8 + bi), 1)
+    # Cap
+    pygame.draw.rect(surface, _darken(C_CHIMNEY, 28),
+                     (chimney_x - 5, sy - chimney_h + 4, chimney_w + 10, 8))
+    pygame.draw.rect(surface, _lighten(C_CHIMNEY, 12),
+                     (chimney_x - 4, sy - chimney_h + 4, chimney_w + 8, 3))
+    # Smoke puffs (alpha circles)
+    for ox, oy, r, a in [(2, -8, 8, 85), (6, -20, 6, 58), (2, -32, 5, 35)]:
+        sm = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+        pygame.draw.circle(sm, (195, 190, 185, a), (r + 2, r + 2), r)
+        surface.blit(sm, (chimney_x + chimney_w // 2 + ox - r - 2,
+                          sy - chimney_h + oy - r - 2))
 
-    # ---- Front wall (bottom 45%) ----
+    # ---- Front wall ----
     wall_y = sy + roof_h
     wall_h = h - roof_h
     pygame.draw.rect(surface, C_HOUSE_RED, (sx, wall_y, w, wall_h))
+    # Subtle horizontal board lines
+    for by in range(wall_y + 14, wall_y + wall_h - 8, 16):
+        pygame.draw.line(surface, _darken(C_HOUSE_RED, 16), (sx + 10, by), (sx + w - 10, by), 1)
+    # Left-side wall shadow
+    sh_w = pygame.Surface((w // 5, wall_h), pygame.SRCALPHA)
+    for xi in range(w // 5):
+        a = int(30 * (1.0 - xi / (w // 5)))
+        pygame.draw.line(sh_w, (0, 0, 0, a), (xi, 0), (xi, wall_h))
+    surface.blit(sh_w, (sx, wall_y))
 
-    # Foundation strip at the very bottom
+    # ---- Foundation ----
     foundation_h = int(wall_h * 0.18)
-    pygame.draw.rect(surface, C_FOUNDATION,
-                     (sx, sy + h - foundation_h, w, foundation_h))
+    pygame.draw.rect(surface, C_FOUNDATION, (sx, sy + h - foundation_h, w, foundation_h))
+    # Stone blocks
+    for fi in range(0, w - 16, 26):
+        fx = sx + fi + 2
+        fy = sy + h - foundation_h + 3
+        pygame.draw.rect(surface, _darken(C_FOUNDATION, 18),  (fx, fy, 22, foundation_h - 8))
+        pygame.draw.rect(surface, _lighten(C_FOUNDATION, 14), (fx + 1, fy + 1, 20, 4))
 
-    # ---- White corner trim ----
-    trim_w = 8
-    # Left edge trim
-    pygame.draw.rect(surface, C_HOUSE_TRIM, (sx,         wall_y, trim_w, wall_h))
-    # Right edge trim
+    # ---- White trim ----
+    trim_w = 9
+    pygame.draw.rect(surface, C_HOUSE_TRIM, (sx,             wall_y, trim_w, wall_h))
     pygame.draw.rect(surface, C_HOUSE_TRIM, (sx + w - trim_w, wall_y, trim_w, wall_h))
-    # Top of wall strip
-    pygame.draw.rect(surface, C_HOUSE_TRIM, (sx, wall_y, w, 6))
+    pygame.draw.rect(surface, C_HOUSE_TRIM, (sx, wall_y, w, 7))
+    # Trim edge highlight
+    pygame.draw.rect(surface, _lighten(C_HOUSE_TRIM, 18), (sx + 1, wall_y, 2, wall_h))
+    pygame.draw.rect(surface, _lighten(C_HOUSE_TRIM, 18), (sx + w - trim_w + 1, wall_y, 2, wall_h))
 
-    # ---- Windows (2 on each side of the door) ----
+    # ---- Windows ----
     win_w = int(w * 0.12)
     win_h = int(wall_h * 0.45)
     win_y = wall_y + int(wall_h * 0.12)
-    window_cols = [
-        sx + int(w * 0.08),
-        sx + int(w * 0.24),
-        sx + int(w * 0.64),
-        sx + int(w * 0.80),
-    ]
-    for wx in window_cols:
+    window_cols = [sx + int(w * 0.08), sx + int(w * 0.24),
+                   sx + int(w * 0.64), sx + int(w * 0.80)]
+    for wx_ in window_cols:
+        # Shadow recess
+        pygame.draw.rect(surface, _darken(C_HOUSE_RED, 22),
+                         (wx_ - 5, win_y - 5, win_w + 10, win_h + 10))
         # White frame
         pygame.draw.rect(surface, C_HOUSE_TRIM,
-                         (wx - 3, win_y - 3, win_w + 6, win_h + 6))
-        # Glass pane (light blue)
-        pygame.draw.rect(surface, C_WINDOW,
-                         (wx, win_y, win_w, win_h))
-        # Window cross-divider
-        mid_wx = wx + win_w // 2
+                         (wx_ - 3, win_y - 3, win_w + 6, win_h + 6))
+        # Glass
+        pygame.draw.rect(surface, C_WINDOW, (wx_, win_y, win_w, win_h))
+        # Cross divider
+        mid_wx = wx_ + win_w // 2
         mid_wy = win_y + win_h // 2
         pygame.draw.line(surface, C_HOUSE_TRIM, (mid_wx, win_y), (mid_wx, win_y + win_h), 2)
-        pygame.draw.line(surface, C_HOUSE_TRIM, (wx, mid_wy), (wx + win_w, mid_wy), 2)
-        # Reflection glint
-        pygame.draw.line(surface, (220, 240, 255),
-                         (wx + 2, win_y + 2), (wx + win_w // 2 - 2, win_y + 2), 2)
+        pygame.draw.line(surface, C_HOUSE_TRIM, (wx_, mid_wy), (wx_ + win_w, mid_wy), 2)
+        # Glass reflections
+        pygame.draw.line(surface, (235, 248, 255),
+                         (wx_ + 2, win_y + 2), (wx_ + win_w // 2 - 2, win_y + 3), 2)
+        pygame.draw.line(surface, (205, 230, 248),
+                         (wx_ + 2, win_y + 6), (wx_ + 5, win_y + win_h // 2), 1)
+        # Flower box below window
+        fb_y = win_y + win_h + 3
+        pygame.draw.rect(surface, _darken(C_HOUSE_TRIM, 8),  (wx_ - 2, fb_y,     win_w + 4, 9))
+        pygame.draw.rect(surface, _darken(C_HOUSE_TRIM, 22), (wx_ - 2, fb_y + 6, win_w + 4, 3))
+        flower_colors = [C_FLOWERS_R, C_FLOWERS_Y, C_FLOWERS_R, C_FLOWERS_Y]
+        for fi, fc in enumerate(flower_colors):
+            fxx = wx_ + 3 + fi * (win_w // 4)
+            pygame.draw.circle(surface, (38, 110, 28), (fxx, fb_y + 2), 2)
+            pygame.draw.circle(surface, fc,             (fxx, fb_y - 1), 3)
 
-    # ---- Door (centre of wall) ----
+    # ---- Door ----
     door_w = int(w * 0.14)
     door_h = int(wall_h * 0.72)
     door_x = sx + (w - door_w) // 2
     door_y = wall_y + wall_h - door_h - foundation_h
-    # Door frame (white)
-    pygame.draw.rect(surface, C_DOOR_FRAME,
-                     (door_x - 4, door_y - 4, door_w + 8, door_h + 8))
-    # Door panel (dark wood)
+    # Shadow recess
+    pygame.draw.rect(surface, _darken(C_HOUSE_RED, 28),
+                     (door_x - 6, door_y - 6, door_w + 12, door_h + 12))
+    # Frame
+    pygame.draw.rect(surface, C_DOOR_FRAME, (door_x - 4, door_y - 4, door_w + 8, door_h + 8))
+    # Door surface
     pygame.draw.rect(surface, C_DOOR, (door_x, door_y, door_w, door_h))
-    # Door panels (decorative raised panels)
+    # Raised panels
     panel_margin = 6
     panel_w = door_w - panel_margin * 2
     panel_h = (door_h - panel_margin * 3) // 2
     for pi in range(2):
         py_ = door_y + panel_margin + pi * (panel_h + panel_margin)
-        pygame.draw.rect(surface, _lighten(C_DOOR, 20),
-                         (door_x + panel_margin, py_, panel_w, panel_h))
-        pygame.draw.rect(surface, _darken(C_DOOR, 15),
-                         (door_x + panel_margin + 2, py_ + 2, panel_w - 4, panel_h - 4))
-    # Door handle (small circle)
-    pygame.draw.circle(surface, (180, 150, 60),
-                       (door_x + door_w - 8, door_y + door_h // 2), 4)
+        pygame.draw.rect(surface, _darken(C_DOOR, 22), (door_x + panel_margin,     py_,     panel_w,     panel_h))
+        pygame.draw.rect(surface, _lighten(C_DOOR, 18),(door_x + panel_margin + 1, py_ + 1, panel_w - 2, 3))
+        pygame.draw.rect(surface, _lighten(C_DOOR, 18),(door_x + panel_margin + 1, py_ + 1, 3, panel_h - 2))
+    # Handle
+    pygame.draw.circle(surface, (200, 165, 60), (door_x + door_w - 8, door_y + door_h // 2), 5)
+    pygame.draw.circle(surface, (245, 215, 105),(door_x + door_w - 9, door_y + door_h // 2 - 1), 2)
 
-    # ---- House name sign above door ----
-    # (Font would look nicer but we avoid requiring font files)
-    sign_x = door_x - 10
-    sign_y = door_y - 20
-    sign_w = door_w + 20
-    sign_h = 16
-    pygame.draw.rect(surface, (140, 100, 45), (sign_x, sign_y, sign_w, sign_h))
+    # ---- Sign above door ----
+    sign_x = door_x - 12
+    sign_y = door_y - 23
+    sign_w = door_w + 24
+    sign_h = 17
+    pygame.draw.rect(surface, _darken(C_HOUSE_RED, 12), (sign_x + 1, sign_y + 1, sign_w, sign_h))
+    pygame.draw.rect(surface, (148, 108, 50),             (sign_x,     sign_y,     sign_w, sign_h))
     pygame.draw.rect(surface, C_HOUSE_TRIM, (sign_x, sign_y, sign_w, 3))
     pygame.draw.rect(surface, C_HOUSE_TRIM, (sign_x, sign_y + sign_h - 3, sign_w, 3))
+    pygame.draw.rect(surface, _lighten((148, 108, 50), 28), (sign_x + 2, sign_y + 4, sign_w - 4, 5))
 
 
 def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float):
@@ -444,7 +556,7 @@ def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float
     pygame.draw.circle(surface, C_FLAG_YELLOW, (pole_x, pole_top), 6)
     pygame.draw.circle(surface, (255, 220, 60), (pole_x - 1, pole_top - 1), 3)
 
-    # Flag (Swedish: yellow/gold background with blue Nordic cross)
+    # Flag (inverted: blue background with yellow Nordic cross)
     flag_x = pole_x + pole_w // 2 + 1
     flag_y = pole_top + 8
     flag_w = T * 2 - 4    # flag width in pixels
@@ -454,7 +566,7 @@ def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float
     wave = math.sin(time_of_day * 50.0) * 3
     wave2 = math.sin(time_of_day * 50.0 + 1.0) * 2
 
-    # Draw flag as a series of vertical slices with slight height variation
+    # Draw flag background as a series of vertical slices with slight height variation
     slices = 12
     slice_w = flag_w // slices
     for i in range(slices):
@@ -462,7 +574,7 @@ def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float
         sx_ = flag_x + i * slice_w
         sy_ = flag_y + wave_offset
         sh_ = flag_h - abs(wave_offset)
-        pygame.draw.rect(surface, C_FLAG_YELLOW, (sx_, sy_, slice_w + 1, sh_))
+        pygame.draw.rect(surface, C_FLAG_BLUE, (sx_, sy_, slice_w + 1, sh_))
 
     # Nordic cross (horizontal bar)
     cross_y   = flag_y + flag_h // 2 - 3
@@ -472,7 +584,7 @@ def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float
         wave_offset = int(math.sin(i / slices * 3.14 + time_of_day * 50.0) * 3)
         sx_ = flag_x + i * slice_w
         sy_ = cross_y + wave_offset
-        pygame.draw.rect(surface, C_FLAG_BLUE, (sx_, sy_, slice_w + 1, cross_h))
+        pygame.draw.rect(surface, C_FLAG_YELLOW, (sx_, sy_, slice_w + 1, cross_h))
 
     # Nordic cross (vertical bar — positioned 30% from left)
     for i in range(slices):
@@ -480,57 +592,75 @@ def _draw_flagpole(surface: pygame.Surface, sx: int, sy: int, time_of_day: float
         sx_ = flag_x + i * slice_w
         sy_ = flag_y + wave_offset
         if flag_x + cross_col_w - 4 <= sx_ <= flag_x + cross_col_w + 4:
-            pygame.draw.rect(surface, C_FLAG_BLUE, (sx_, sy_, slice_w + 1, flag_h - abs(wave_offset)))
+            pygame.draw.rect(surface, C_FLAG_YELLOW, (sx_, sy_, slice_w + 1, flag_h - abs(wave_offset)))
 
     # Flag outline / shadow edge
-    pygame.draw.rect(surface, _darken(C_FLAG_YELLOW, 40),
+    pygame.draw.rect(surface, _darken(C_FLAG_BLUE, 40),
                      (flag_x, flag_y, 2, flag_h))
 
 
 def _draw_tree(surface: pygame.Surface, sx: int, sy: int):
     """
-    Draw a tall Swedish pine/birch style tree.
+    Draw a lush Swedish pine/birch tree with layered canopy and highlights.
     Trees are roughly 2 tiles wide × 3 tiles tall.
     """
     T  = TILE_SIZE
-    cx = sx + T          # centre x of the 2-tile-wide tree
+    cx = sx + T
 
-    # Trunk
-    trunk_w = 10
-    trunk_h = int(T * 1.4)
-    trunk_x = cx - trunk_w // 2
-    trunk_y = sy + int(T * 1.8)
-    pygame.draw.rect(surface, _darken(C_TREE_TRUNK, 20),
-                     (trunk_x - 2, trunk_y, trunk_w + 4, trunk_h))
-    pygame.draw.rect(surface, C_TREE_TRUNK,
-                     (trunk_x, trunk_y, trunk_w, trunk_h))
+    # Trunk — shadow side + lit side + highlight stripe
+    trunk_w = 11
+    trunk_h = int(T * 1.55)
+    tx = cx - trunk_w // 2
+    ty = sy + int(T * 1.75)
+    pygame.draw.rect(surface, _darken(C_TREE_TRUNK, 28), (tx - 2, ty, trunk_w + 4, trunk_h))
+    pygame.draw.rect(surface, C_TREE_TRUNK,               (tx,     ty, trunk_w,     trunk_h))
+    pygame.draw.rect(surface, _lighten(C_TREE_TRUNK, 22), (tx + 2, ty + 4, 3, trunk_h - 8))
+    # Root flare
+    pygame.draw.ellipse(surface, _darken(C_TREE_TRUNK, 22),
+                        (tx - 6, ty + trunk_h - 8, trunk_w + 12, 11))
 
-    # Three canopy layers (wider at bottom, narrower at top — pine silhouette)
+    # Canopy layers — bottom-most to top.  Each progressively smaller and raised.
+    # (dy_from_sy, radius, base_colour, x_offset)
     layers = [
-        # (centre_y_offset, radius, colour)
-        (int(T * 1.6),  int(T * 0.90), C_TREE_DARK),
-        (int(T * 1.0),  int(T * 0.75), C_TREE_MID),
-        (int(T * 0.4),  int(T * 0.60), C_TREE_LIGHT),
-        (int(T * -0.1), int(T * 0.40), C_TREE_MID),
+        (int(T * 1.58), int(T * 0.96), C_TREE_DARK,   0),
+        (int(T * 1.05), int(T * 0.82), C_TREE_MID,   -3),
+        (int(T * 0.58), int(T * 0.70), C_TREE_DARK,   2),
+        (int(T * 0.14), int(T * 0.55), C_TREE_MID,   -2),
+        (int(T * -0.24),int(T * 0.38), C_TREE_LIGHT,  0),
     ]
-    for dy, r, col in layers:
-        pygame.draw.circle(surface, _darken(col, 15), (cx,     sy + dy + 2), r)
-        pygame.draw.circle(surface, col,              (cx,     sy + dy),     r)
-        pygame.draw.circle(surface, _lighten(col, 15),(cx - r//3, sy + dy - r//3), r // 3)
+    for dy, r, col, ox in layers:
+        cy_ = sy + dy
+        # Offset drop-shadow (slightly south-east)
+        pygame.draw.circle(surface, _darken(col, 26), (cx + ox + 4, cy_ + 4), r)
+        # Main sphere
+        pygame.draw.circle(surface, col,               (cx + ox,     cy_),     r)
+        # Sub-highlight (top-left, simulating sun from upper-left)
+        hx_ = cx + ox - r // 3
+        hy_ = cy_ - r // 3
+        pygame.draw.circle(surface, _lighten(col, 26), (hx_, hy_), r // 3)
+        # Tiny bright specular dot
+        pygame.draw.circle(surface, _lighten(col, 44), (hx_ - 2, hy_ - 2), max(2, r // 7))
 
 
 def _draw_bush(surface: pygame.Surface, sx: int, sy: int):
-    """Draw a small round bush — occupies roughly one tile."""
+    """Draw a detailed rounded bush with berries and highlight."""
     T  = TILE_SIZE
     cx = sx + T // 2
-    cy = sy + T - 12
+    cy = sy + T - 14
 
-    r = T // 3
-    pygame.draw.circle(surface, _darken(C_BUSH, 20), (cx,     cy + 2), r + 2)
-    pygame.draw.circle(surface, C_BUSH,              (cx - 4, cy),     r)
-    pygame.draw.circle(surface, C_BUSH,              (cx + 4, cy),     r)
-    pygame.draw.circle(surface, C_BUSH,              (cx,     cy - 4), r - 2)
-    pygame.draw.circle(surface, _lighten(C_BUSH, 20),(cx - 5, cy - 4), r // 2)
+    r = T // 3 + 3
+    # Dark base shadow
+    pygame.draw.circle(surface, _darken(C_BUSH, 32), (cx,     cy + 4), r + 2)
+    # Three overlapping lobes
+    pygame.draw.circle(surface, C_BUSH,               (cx - 6, cy + 1), r - 1)
+    pygame.draw.circle(surface, C_BUSH,               (cx + 6, cy + 1), r - 1)
+    pygame.draw.circle(surface, _lighten(C_BUSH, 14), (cx,     cy - 4), r - 2)
+    # Top highlight
+    pygame.draw.circle(surface, _lighten(C_BUSH, 30), (cx - 7, cy - 5), r // 3)
+    # Red berries
+    for bx_, by_ in [(cx - 4, cy - 1), (cx + 5, cy - 3), (cx, cy + 3)]:
+        pygame.draw.circle(surface, (195, 48, 38),  (bx_, by_), 3)
+        pygame.draw.circle(surface, (245, 140, 130),(bx_ - 1, by_ - 1), 1)
 
 
 def _draw_sell_zone(surface: pygame.Surface, sx: int, sy: int):

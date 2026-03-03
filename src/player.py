@@ -314,85 +314,141 @@ class Player:
 
     def _draw_character(self, surface, sx, sy, direction, frame, moving):
         """
-        Draw a simple top-down pixel-art character.
-        The character is 32×32 pixels on screen.
-
-        For a top-down game we show:
-          - A round head (skin colour + hat)
-          - Body (shirt colour)
-          - Two legs (shoes) that animate
+        Draw a detailed top-down pixel-art character (32×32 px collision box).
+        Rendered with layered shading: shadow → legs → body → arms → head → hat.
         """
-        T  = PLAYER_SIZE         # 32
-        cx = sx + T // 2        # centre x
-        cy = sy + T // 2        # centre y
+        T  = PLAYER_SIZE   # 32
+        cx = sx + T // 2
+        cy = sy + T // 2
 
-        # -- Shadow --
-        pygame.draw.ellipse(surface, (0, 0, 0, 80),
-                            (sx + 4, sy + T - 8, T - 8, 8))
+        # -- Drop shadow (soft ellipse beneath feet) --
+        sh = pygame.Surface((T - 4, 8), pygame.SRCALPHA)
+        pygame.draw.ellipse(sh, (0, 0, 0, 65), sh.get_rect())
+        surface.blit(sh, (sx + 2, sy + T - 8))
 
-        # -- Legs/feet (drawn first, behind body) --
+        # -- Legs / shoes --
+        shoe_dark = (max(0, COL_SHOES[0] - 18), max(0, COL_SHOES[1] - 12), max(0, COL_SHOES[2] - 8))
+        pant_dark = (max(0, COL_PANTS[0] - 12), max(0, COL_PANTS[1] - 10), max(0, COL_PANTS[2] - 8))
+
         if direction in (DIR_DOWN, DIR_UP):
-            # Legs visible below/above body
-            leg_offset = 4 if frame == 0 else -4
-            pygame.draw.rect(surface, COL_PANTS, (cx - 9, sy + 18, 8, 8))
-            pygame.draw.rect(surface, COL_PANTS, (cx + 1, sy + 18, 8, 8))
-            pygame.draw.rect(surface, COL_SHOES, (cx - 10, sy + 24, 9, 5))
-            pygame.draw.rect(surface, COL_SHOES, (cx + 1,  sy + 24, 9, 5))
+            # Two legs side-by-side, each with slight animation offset
+            lo = 2 if frame == 0 else -2
+            for lx in (cx - 9, cx + 1):
+                pygame.draw.rect(surface, pant_dark, (lx - 1, sy + 17 + abs(lo), 9, 9))
+                pygame.draw.rect(surface, COL_PANTS, (lx,     sy + 17,            8, 8))
+            # Shoes slightly wider than pants
+            pygame.draw.rect(surface, shoe_dark, (cx - 11, sy + 24, 10, 6))
+            pygame.draw.rect(surface, COL_SHOES, (cx - 10, sy + 24,  9, 5))
+            pygame.draw.rect(surface, shoe_dark, (cx + 1,  sy + 24, 10, 6))
+            pygame.draw.rect(surface, COL_SHOES, (cx + 1,  sy + 24,  9, 5))
+            # Shoe highlight
+            pygame.draw.line(surface, (min(255, COL_SHOES[0]+25), min(255, COL_SHOES[1]+18), min(255, COL_SHOES[2]+12)),
+                             (cx - 9, sy + 24), (cx - 3, sy + 24), 1)
         else:
-            # Side view — legs one in front of the other
-            leg_offset = 5 if frame == 0 else -5
-            pygame.draw.rect(surface, COL_PANTS, (cx - 8, sy + 18 - leg_offset, 7, 9))
-            pygame.draw.rect(surface, COL_PANTS, (cx + 1, sy + 18 + leg_offset, 7, 9))
+            # Side view — alternating leg strides
+            lo = 6 if frame == 0 else -6
+            for lx, ly in [(cx - 8, sy + 17 - lo), (cx + 1, sy + 17 + lo)]:
+                pygame.draw.rect(surface, pant_dark, (lx - 1, ly,     8, 10))
+                pygame.draw.rect(surface, COL_PANTS, (lx,     ly,     7, 9))
+                pygame.draw.rect(surface, shoe_dark, (lx - 1, ly + 7, 9, 5))
+                pygame.draw.rect(surface, COL_SHOES, (lx,     ly + 7, 8, 4))
 
-        # -- Body (shirt) --
-        pygame.draw.ellipse(surface, COL_SHIRT,
-                            (sx + 6, sy + 10, T - 12, 16))
+        # -- Body (shirt with shading) --
+        shirt_hi  = (min(255, COL_SHIRT[0]+22), min(255, COL_SHIRT[1]+20), min(255, COL_SHIRT[2]+18))
+        shirt_sh  = (max(0,   COL_SHIRT[0]-18), max(0,   COL_SHIRT[1]-16), max(0,   COL_SHIRT[2]-14))
+        pygame.draw.ellipse(surface, shirt_sh,  (sx + 5,  sy + 10, T - 10, 17))
+        pygame.draw.ellipse(surface, COL_SHIRT, (sx + 6,  sy + 10, T - 12, 16))
+        pygame.draw.ellipse(surface, shirt_hi,  (sx + 8,  sy + 11, T - 18, 6))
+        # Collar
+        pygame.draw.arc(surface, (min(255, COL_SHIRT[0]+40), min(255, COL_SHIRT[1]+38), min(255, COL_SHIRT[2]+36)),
+                        (cx - 5, sy + 9, 10, 6), 0, 3.14159, 2)
 
         # -- Arms --
         arm_w, arm_h = 5, 10
+        skin_hi = (min(255, COL_SKIN[0]+22), min(255, COL_SKIN[1]+16), min(255, COL_SKIN[2]+10))
         if direction == DIR_LEFT:
-            pygame.draw.rect(surface, COL_SHIRT, (sx,        sy + 12, arm_w, arm_h))
-            pygame.draw.rect(surface, COL_SKIN,  (sx - 1,    sy + 20, arm_w, 5))
+            pygame.draw.rect(surface, shirt_sh,  (sx - 1,     sy + 12, arm_w + 1, arm_h))
+            pygame.draw.rect(surface, COL_SHIRT, (sx,         sy + 12, arm_w,     arm_h))
+            pygame.draw.rect(surface, COL_SKIN,  (sx - 1,     sy + 20, arm_w + 1, 6))
+            pygame.draw.circle(surface, skin_hi, (sx + 1,     sy + 25), 2)
         elif direction == DIR_RIGHT:
-            pygame.draw.rect(surface, COL_SHIRT, (sx + T - arm_w, sy + 12, arm_w, arm_h))
-            pygame.draw.rect(surface, COL_SKIN,  (sx + T - arm_w, sy + 20, arm_w + 1, 5))
+            pygame.draw.rect(surface, shirt_sh,  (sx + T - arm_w,     sy + 12, arm_w + 1, arm_h))
+            pygame.draw.rect(surface, COL_SHIRT, (sx + T - arm_w,     sy + 12, arm_w,     arm_h))
+            pygame.draw.rect(surface, COL_SKIN,  (sx + T - arm_w,     sy + 20, arm_w + 1, 6))
+            pygame.draw.circle(surface, skin_hi, (sx + T - arm_w + 2, sy + 25), 2)
         else:
-            # Facing up/down — show both arms to the sides
-            pygame.draw.rect(surface, COL_SHIRT, (sx + 2,       sy + 13, arm_w, 9))
-            pygame.draw.rect(surface, COL_SHIRT, (sx + T - arm_w - 2, sy + 13, arm_w, 9))
+            # Both arms visible
+            for ax in (sx + 2, sx + T - arm_w - 2):
+                pygame.draw.rect(surface, shirt_sh,  (ax - 1, sy + 13, arm_w + 1, 9))
+                pygame.draw.rect(surface, COL_SHIRT, (ax,     sy + 13, arm_w,     9))
 
-        # -- Head --
+        # -- Head base --
         head_r = 9
-        pygame.draw.circle(surface, COL_SKIN, (cx, sy + 9), head_r)
+        head_sh = (max(0, COL_SKIN[0]-18), max(0, COL_SKIN[1]-14), max(0, COL_SKIN[2]-10))
+        pygame.draw.circle(surface, head_sh, (cx + 1, sy + 10), head_r)
+        pygame.draw.circle(surface, COL_SKIN,(cx,     sy + 9),  head_r)
+        # Skin highlight
+        pygame.draw.circle(surface, skin_hi, (cx - 3, sy + 5), 3)
 
-        # -- Hair (visible at back depending on direction) --
+        # -- Hair --
         if direction == DIR_DOWN:
             pygame.draw.arc(surface, COL_HAIR,
-                            (cx - head_r, sy, head_r * 2, head_r * 2),
-                            0, 3.14159, 3)
+                            (cx - head_r, sy, head_r * 2, head_r * 2), 0, 3.14159, 4)
         elif direction == DIR_UP:
-            pygame.draw.circle(surface, COL_HAIR, (cx, sy + 9), head_r)  # full back
+            pygame.draw.circle(surface, COL_HAIR, (cx, sy + 9), head_r)
+            pygame.draw.circle(surface, (max(0,COL_HAIR[0]-15), max(0,COL_HAIR[1]-12), max(0,COL_HAIR[2]-10)),
+                               (cx + 1, sy + 10), head_r)
+        elif direction == DIR_LEFT:
+            pygame.draw.arc(surface, COL_HAIR,
+                            (cx - head_r + 2, sy, head_r * 2 - 4, head_r * 2), 0, 3.14159, 3)
+        elif direction == DIR_RIGHT:
+            pygame.draw.arc(surface, COL_HAIR,
+                            (cx - head_r + 2, sy, head_r * 2 - 4, head_r * 2), 0, 3.14159, 3)
 
-        # -- Hat (wide-brimmed 1920s style) --
+        # -- Hat (wide-brimmed 1920s felt hat) --
         brim_y  = sy + 1
         brim_w  = T - 4
         crown_w = T - 12
-        crown_h = 7
-        # Brim
-        pygame.draw.rect(surface, COL_HAT,
-                         (sx + 2, brim_y + crown_h - 2, brim_w, 4))
+        crown_h = 8
+        hat_hi  = (min(255, COL_HAT[0]+20), min(255, COL_HAT[1]+16), min(255, COL_HAT[2]+12))
+        hat_sh  = (max(0,   COL_HAT[0]-12), max(0,   COL_HAT[1]-10), max(0,   COL_HAT[2]-8))
+        # Crown shadow
+        pygame.draw.rect(surface, hat_sh, (sx + (T - crown_w) // 2 + 1, brim_y + 1, crown_w, crown_h))
         # Crown
-        pygame.draw.rect(surface, COL_HAT,
-                         (sx + (T - crown_w) // 2, brim_y, crown_w, crown_h))
-        # Hat band (light-coloured strip on the brim)
-        pygame.draw.rect(surface, (140, 110, 60),
+        pygame.draw.rect(surface, COL_HAT, (sx + (T - crown_w) // 2, brim_y, crown_w, crown_h))
+        # Crown top highlight
+        pygame.draw.rect(surface, hat_hi, (sx + (T - crown_w) // 2 + 1, brim_y + 1, crown_w - 2, 2))
+        # Brim shadow
+        pygame.draw.rect(surface, hat_sh, (sx + 3, brim_y + crown_h - 1, brim_w, 5))
+        # Brim
+        pygame.draw.rect(surface, COL_HAT, (sx + 2, brim_y + crown_h - 2, brim_w, 4))
+        # Hat band
+        pygame.draw.rect(surface, (148, 118, 62),
                          (sx + (T - crown_w) // 2, brim_y + crown_h - 3, crown_w, 3))
+        pygame.draw.rect(surface, (175, 145, 80),
+                         (sx + (T - crown_w) // 2, brim_y + crown_h - 3, crown_w, 1))
 
-        # -- Eyes (visible only when facing down or sideways) --
+        # -- Eyes --
+        eye_col = (48, 34, 18)
+        eye_hi  = (210, 230, 250)
         if direction == DIR_DOWN:
-            pygame.draw.circle(surface, (50, 35, 20), (cx - 3, sy + 9), 2)
-            pygame.draw.circle(surface, (50, 35, 20), (cx + 3, sy + 9), 2)
+            for ex in (cx - 3, cx + 3):
+                pygame.draw.circle(surface, eye_col, (ex,     sy + 9), 2)
+                pygame.draw.circle(surface, eye_hi,  (ex - 1, sy + 8), 1)
         elif direction == DIR_LEFT:
-            pygame.draw.circle(surface, (50, 35, 20), (cx - 5, sy + 9), 2)
+            pygame.draw.circle(surface, eye_col, (cx - 5, sy + 9), 2)
+            pygame.draw.circle(surface, eye_hi,  (cx - 6, sy + 8), 1)
         elif direction == DIR_RIGHT:
-            pygame.draw.circle(surface, (50, 35, 20), (cx + 5, sy + 9), 2)
+            pygame.draw.circle(surface, eye_col, (cx + 5, sy + 9), 2)
+            pygame.draw.circle(surface, eye_hi,  (cx + 4, sy + 8), 1)
+
+        # -- Rosy cheeks (facing down / sideways) --
+        if direction != DIR_UP:
+            cheek = (220, 155, 125)
+            if direction == DIR_DOWN:
+                pygame.draw.circle(surface, cheek, (cx - 5, sy + 11), 2)
+                pygame.draw.circle(surface, cheek, (cx + 5, sy + 11), 2)
+            elif direction == DIR_LEFT:
+                pygame.draw.circle(surface, cheek, (cx - 3, sy + 11), 2)
+            elif direction == DIR_RIGHT:
+                pygame.draw.circle(surface, cheek, (cx + 3, sy + 11), 2)

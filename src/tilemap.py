@@ -176,59 +176,93 @@ def _draw_tile(surface: pygame.Surface, rect: pygame.Rect, tile_id: int,
                col: int = 0, row: int = 0):
     """
     Draw a single base tile into the given screen rect.
-    All visual logic for each tile type lives here.
-    col, row are the world-space tile coordinates (used for stable patterns).
+    col, row are world-space tile coordinates (used for stable patterns).
     """
-    T = TILE_SIZE  # shorthand
+    T = TILE_SIZE
 
     if tile_id in (T_GRASS, T_GRASS_FLOWER):
-        # Checkerboard of two slightly different greens for visual texture
-        # Use world-space col/row so the pattern stays fixed as the camera scrolls
         colour = C_GRASS_1 if (col + row) % 2 == 0 else C_GRASS_2
         pygame.draw.rect(surface, colour, rect)
 
+        # Subtle hand-painted texture: deterministic dots from a cheap integer hash
+        h = (col * 2654435761 + row * 2246822519) & 0xFFFFFFFF
+        dot_dark  = (max(0, colour[0] - 22), max(0, colour[1] - 20), max(0, colour[2] - 14))
+        dot_light = (min(255, colour[0] + 18), min(255, colour[1] + 16), min(255, colour[2] + 10))
+        for i in range(5):
+            hh = (h ^ (h >> (i * 3 + 4))) & 0xFFFFFFFF
+            dx = hh % (T - 8) + 4
+            dy = (hh >> 8) % (T - 8) + 4
+            dc = dot_dark if (hh >> 16) & 1 else dot_light
+            r  = 1 + ((hh >> 20) & 1)
+            pygame.draw.circle(surface, dc, (rect.x + dx, rect.y + dy), r)
+
         if tile_id == T_GRASS_FLOWER:
-            # Tiny wildflower dots scattered across the tile
             cx, cy = rect.centerx, rect.centery
             fc = C_FLOWERS_R if (col * 3 + row) % 3 == 0 else C_FLOWERS_Y
-            # Draw a few small dots to suggest flowers
             for dx, dy in [(-8, -5), (6, 4), (-3, 7), (9, -8)]:
-                pygame.draw.circle(surface, fc, (cx + dx, cy + dy), 2)
+                pygame.draw.circle(surface, fc, (cx + dx, cy + dy), 3)
+                pygame.draw.circle(surface, (255, 248, 220), (cx + dx, cy + dy), 1)
 
     elif tile_id == T_PATH:
         pygame.draw.rect(surface, C_PATH, rect)
-        # Subtle texture lines to suggest packed dirt
-        pygame.draw.line(surface, C_PATH_DARK, (rect.x, rect.y + 12),
-                         (rect.right, rect.y + 12), 1)
-        pygame.draw.line(surface, C_PATH_DARK, (rect.x, rect.y + 34),
-                         (rect.right, rect.y + 34), 1)
+        # Edge lines
+        pygame.draw.line(surface, C_PATH_DARK, (rect.x, rect.y + 12), (rect.right, rect.y + 12), 1)
+        pygame.draw.line(surface, C_PATH_DARK, (rect.x, rect.y + 34), (rect.right, rect.y + 34), 1)
+        # Pebbles via deterministic hash
+        h = (col * 1619 + row * 2971) & 0xFFFFFFFF
+        pebble_hi = (min(255, C_PATH[0] + 30), min(255, C_PATH[1] + 24), min(255, C_PATH[2] + 16))
+        for i in range(6):
+            hh = (h * (i * 6271 + 1)) & 0xFFFFFF
+            px = rect.x + hh % (T - 8) + 4
+            py = rect.y + (hh >> 8) % (T - 8) + 4
+            pr = 1 + (hh >> 16) % 2
+            pc = C_PATH_DARK if (hh >> 18) & 1 else pebble_hi
+            pygame.draw.circle(surface, pc, (px, py), pr)
 
     elif tile_id == T_WATER:
         pygame.draw.rect(surface, C_WATER, rect)
-        # Highlight ripple lines
-        pygame.draw.line(surface, C_WATER_DARK, (rect.x + 4, rect.y + 16),
-                         (rect.x + T - 8, rect.y + 16), 2)
-        pygame.draw.line(surface, C_WATER_DARK, (rect.x + 8, rect.y + 30),
-                         (rect.x + T - 4, rect.y + 30), 2)
+        # Top-edge depth shadow
+        pygame.draw.rect(surface, C_WATER_DARK, (rect.x, rect.y, T, 4))
+        # Ripple lines
+        water_hi = (min(255, C_WATER[0] + 38), min(255, C_WATER[1] + 30), min(255, C_WATER[2] + 20))
+        for ry_off, rlen, rx_off in [(14, T - 14, 4), (26, T - 18, 10), (38, T - 10, 6)]:
+            pygame.draw.line(surface, C_WATER_DARK,
+                             (rect.x + rx_off, rect.y + ry_off),
+                             (rect.x + rx_off + rlen, rect.y + ry_off), 2)
+        # Highlight shimmer
+        pygame.draw.line(surface, water_hi,
+                         (rect.x + 6, rect.y + 8), (rect.x + T - 10, rect.y + 8), 2)
 
     elif tile_id == T_HOUSE_FLOOR:
-        # Under the house — draw as dark grass so trees/edges look correct
-        # The farmhouse sprite is drawn on top of this by world.py
         pygame.draw.rect(surface, (50, 100, 42), rect)
 
     elif tile_id == T_DIRT:
         pygame.draw.rect(surface, C_DIRT_DRY, rect)
+        # Soil texture dots
+        h = (col * 1619 + row * 2971) & 0xFFFFFFFF
+        dc = (max(0, C_DIRT_DRY[0] - 24), max(0, C_DIRT_DRY[1] - 16), max(0, C_DIRT_DRY[2] - 10))
+        for i in range(4):
+            hh = (h * (i * 4127 + 1)) & 0xFFFFFF
+            px = rect.x + hh % (T - 8) + 4
+            py = rect.y + (hh >> 8) % (T - 8) + 4
+            pygame.draw.circle(surface, dc, (px, py), 2)
 
     elif tile_id in (T_FENCE_H, T_FENCE_V,
                      T_FENCE_TL, T_FENCE_TR, T_FENCE_BL, T_FENCE_BR,
                      T_FENCE_GATE):
-        # Draw grass beneath fence posts so the ground shows through
         base_colour = C_GRASS_1 if (col + row) % 2 == 0 else C_GRASS_2
         pygame.draw.rect(surface, base_colour, rect)
+        # Match grass texture under fence
+        h = (col * 2654435761 + row * 2246822519) & 0xFFFFFFFF
+        dot_dark = (max(0, base_colour[0] - 22), max(0, base_colour[1] - 20), max(0, base_colour[2] - 14))
+        for i in range(3):
+            hh = (h ^ (h >> (i * 3 + 4))) & 0xFFFFFFFF
+            dx = hh % (T - 8) + 4
+            dy = (hh >> 8) % (T - 8) + 4
+            pygame.draw.circle(surface, dot_dark, (rect.x + dx, rect.y + dy), 1)
         _draw_fence_segment(surface, rect, tile_id)
 
     else:
-        # Fallback for any unknown tile — plain grass
         pygame.draw.rect(surface, C_GRASS_1, rect)
 
 
@@ -281,33 +315,39 @@ def _draw_fence_segment(surface: pygame.Surface, rect: pygame.Rect, tile_id: int
 
 
 def _draw_farm_cell(surface: pygame.Surface, rect: pygame.Rect, farm_state: int):
-    """
-    Draw the soil overlay on a farmable tile.
-    This is drawn on top of the base tile each frame.
-    """
+    """Draw the soil overlay on a farmable tile."""
+    T = TILE_SIZE
+
     if farm_state == FS_DRY:
-        # Plain dry dirt — just fill with dirt colour
         pygame.draw.rect(surface, C_DIRT_DRY, rect)
+        # Soil clump dots
+        dc = (max(0, C_DIRT_DRY[0] - 24), max(0, C_DIRT_DRY[1] - 16), max(0, C_DIRT_DRY[2] - 10))
+        lc = (min(255, C_DIRT_DRY[0] + 20), min(255, C_DIRT_DRY[1] + 14), min(255, C_DIRT_DRY[2] + 8))
+        for px, py, r, light in [(8, 12, 2, False), (24, 8, 2, False), (36, 22, 3, False),
+                                  (14, 34, 2, False), (40, 38, 2, False), (20, 18, 2, True)]:
+            pygame.draw.circle(surface, lc if light else dc, (rect.x + px, rect.y + py), r)
 
     elif farm_state == FS_TILLED:
-        # Tilled soil: dark brown with small furrow lines
         pygame.draw.rect(surface, C_DIRT_TILLED, rect)
-        # Draw horizontal furrow lines (darker)
-        furrow = (max(0, C_DIRT_TILLED[0] - 20),
-                  max(0, C_DIRT_TILLED[1] - 10),
-                  max(0, C_DIRT_TILLED[2] - 5))
-        for fy in range(rect.y + 8, rect.bottom, 12):
-            pygame.draw.line(surface, furrow, (rect.x + 4, fy), (rect.right - 4, fy), 2)
+        # Deeper furrows with a ridge highlight between each groove
+        furrow_d = (max(0, C_DIRT_TILLED[0] - 26), max(0, C_DIRT_TILLED[1] - 15), max(0, C_DIRT_TILLED[2] - 8))
+        furrow_l = (min(255, C_DIRT_TILLED[0] + 24), min(255, C_DIRT_TILLED[1] + 14), min(255, C_DIRT_TILLED[2] + 7))
+        for fy in range(rect.y + 7, rect.bottom - 4, 10):
+            pygame.draw.line(surface, furrow_d,  (rect.x + 4, fy),     (rect.right - 4, fy),     2)
+            pygame.draw.line(surface, furrow_l,  (rect.x + 5, fy - 2), (rect.right - 5, fy - 2), 1)
 
     elif farm_state == FS_WATERED:
-        # Watered soil: very dark, moist-looking
         pygame.draw.rect(surface, C_DIRT_WET, rect)
-        # Subtle sheen / highlight on the wet soil
-        shine = (min(255, C_DIRT_WET[0] + 25),
-                 min(255, C_DIRT_WET[1] + 15),
-                 min(255, C_DIRT_WET[2] + 10))
-        pygame.draw.rect(surface, shine,
-                         (rect.x + 4, rect.y + 4, TILE_SIZE - 8, 4))
+        furrow_d = (max(0, C_DIRT_WET[0] - 14), max(0, C_DIRT_WET[1] - 9),  max(0, C_DIRT_WET[2] - 5))
+        shine1   = (min(255, C_DIRT_WET[0] + 44), min(255, C_DIRT_WET[1] + 28), min(255, C_DIRT_WET[2] + 20))
+        shine2   = (min(255, C_DIRT_WET[0] + 22), min(255, C_DIRT_WET[1] + 14), min(255, C_DIRT_WET[2] + 10))
+        # Moist furrows
+        for fy in range(rect.y + 7, rect.bottom - 4, 10):
+            pygame.draw.line(surface, furrow_d, (rect.x + 4, fy), (rect.right - 4, fy), 2)
+        # Multiple moisture sheen highlights
+        pygame.draw.rect(surface, shine1, (rect.x + 4,  rect.y + 4,  T - 8,  3))
+        pygame.draw.rect(surface, shine2, (rect.x + 8,  rect.y + 16, T - 18, 2))
+        pygame.draw.rect(surface, shine2, (rect.x + 10, rect.y + 32, T - 22, 2))
 
 
 # ---------------------------------------------------------------------------

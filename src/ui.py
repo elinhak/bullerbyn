@@ -45,20 +45,16 @@ class UI:
     """
 
     def __init__(self):
-        # Initialize pygame's font system and load fonts.
-        # We use the system monospace font so no font files are needed.
         pygame.font.init()
-
-        # Different sized fonts for different purposes
-        self.font_large  = pygame.font.SysFont("Courier New", 20, bold=True)
-        self.font_medium = pygame.font.SysFont("Courier New", 16)
-        self.font_small  = pygame.font.SysFont("Courier New", 12)
-
-        # Fallback to any monospace font if Courier New isn't available
-        if not self.font_large:
-            self.font_large  = pygame.font.Font(None, 22)
-            self.font_medium = pygame.font.Font(None, 18)
-            self.font_small  = pygame.font.Font(None, 14)
+        # Prefer a slightly friendlier proportional font; fall back to monospace
+        for fname in ("Georgia", "Palatino Linotype", "Times New Roman", "Courier New", None):
+            try:
+                self.font_large  = pygame.font.SysFont(fname, 22, bold=True)  if fname else pygame.font.Font(None, 24)
+                self.font_medium = pygame.font.SysFont(fname, 17)              if fname else pygame.font.Font(None, 19)
+                self.font_small  = pygame.font.SysFont(fname, 13)              if fname else pygame.font.Font(None, 15)
+                break
+            except Exception:
+                continue
 
     def draw(self, surface: pygame.Surface, player, world):
         """
@@ -125,21 +121,28 @@ class UI:
         Draw the inventory panel in the top-right corner.
         Shows: gold coins, potato seeds remaining, harvested potatoes.
         """
-        panel_w = 180
-        panel_h = 80
+        panel_w = 200
+        panel_h = 86
         panel_x = SCREEN_WIDTH - panel_w - 12
         panel_y = 12
 
         _draw_panel(surface, panel_x, panel_y, panel_w, panel_h)
 
         items = [
-            (f"Gold:     {player.gold}",     C_UI_GOLD),
-            (f"Seeds:    {player.seeds}",    C_UI_GREEN),
-            (f"Potatoes: {player.potatoes}", (200, 160, 80)),
+            ("Gold",     f"{player.gold}",     C_UI_GOLD,       (220, 185, 55)),
+            ("Seeds",    f"{player.seeds}",    C_UI_GREEN,      (105, 190, 70)),
+            ("Potatoes", f"{player.potatoes}", (200, 162, 82),  (185, 145, 60)),
         ]
-        for i, (text, colour) in enumerate(items):
-            _blit_text(surface, self.font_medium, text,
-                       panel_x + 10, panel_y + 8 + i * 22, colour)
+        for i, (label, val, text_col, dot_col) in enumerate(items):
+            iy = panel_y + 10 + i * 22
+            # Coloured dot icon
+            pygame.draw.circle(surface, dot_col,      (panel_x + 14, iy + 8), 6)
+            pygame.draw.circle(surface, (255, 255, 255, 80), (panel_x + 12, iy + 6), 2)
+            _blit_text(surface, self.font_medium, f"{label}:",
+                       panel_x + 26, iy, C_UI_TEXT)
+            val_w = self.font_medium.size(val)[0]
+            _blit_text(surface, self.font_medium, val,
+                       panel_x + panel_w - val_w - 10, iy, text_col)
 
     # ------------------------------------------------------------------
     # Tool hotbar (bottom-centre)
@@ -174,31 +177,46 @@ class UI:
 
             is_selected = (player.tool == tool_id)
 
+            # Glow halo behind selected slot
+            if is_selected:
+                glow = pygame.Surface((slot_size + 12, slot_size + 12), pygame.SRCALPHA)
+                for gr in range(8, 0, -1):
+                    ga = 12 + gr * 8
+                    pygame.draw.rect(glow, (*C_UI_GOLD, ga),
+                                     (8 - gr, 8 - gr, slot_size + gr * 2, slot_size + gr * 2),
+                                     border_radius=8 + gr)
+                surface.blit(glow, (sx - 6, sy - 6))
+
             # Slot background
             if is_selected:
-                pygame.draw.rect(surface, C_UI_SELECT, (sx, sy, slot_size, slot_size), border_radius=6)
-                pygame.draw.rect(surface, C_UI_GOLD,   (sx, sy, slot_size, slot_size), 3, border_radius=6)
+                pygame.draw.rect(surface, C_UI_SELECT, (sx, sy, slot_size, slot_size), border_radius=8)
+                pygame.draw.rect(surface, C_UI_GOLD,   (sx, sy, slot_size, slot_size), 3, border_radius=8)
+                # Inner top highlight
+                pygame.draw.rect(surface, (min(255,C_UI_SELECT[0]+40), min(255,C_UI_SELECT[1]+36),
+                                           min(255,C_UI_SELECT[2]+20), 180),
+                                 (sx + 3, sy + 3, slot_size - 6, 4), border_radius=4)
             else:
-                pygame.draw.rect(surface, C_UI_SLOT,   (sx, sy, slot_size, slot_size), border_radius=6)
-                pygame.draw.rect(surface, C_UI_BORDER, (sx, sy, slot_size, slot_size), 2, border_radius=6)
+                pygame.draw.rect(surface, C_UI_SLOT,   (sx, sy, slot_size, slot_size), border_radius=8)
+                pygame.draw.rect(surface, C_UI_BORDER, (sx, sy, slot_size, slot_size), 2, border_radius=8)
 
-            # Key number label
-            key_col = C_UI_GOLD if is_selected else (100, 80, 50)
-            _blit_text(surface, self.font_small, str(i + 1),
-                       sx + 4, sy + 4, key_col)
+            # Key number badge (small circle)
+            key_col = C_UI_GOLD if is_selected else (105, 84, 52)
+            badge_surf = pygame.Surface((14, 14), pygame.SRCALPHA)
+            pygame.draw.circle(badge_surf, (*C_UI_BG, 190), (7, 7), 7)
+            surface.blit(badge_surf, (sx + 3, sy + 3))
+            _blit_text(surface, self.font_small, str(i + 1), sx + 6, sy + 4, key_col)
 
             # Tool icon
             icon_x = sx + slot_size // 2
-            icon_y = sy + slot_size // 2 - 4
-            _draw_tool_icon(surface, tool_id, icon_x, icon_y,
-                            selected=is_selected)
+            icon_y = sy + slot_size // 2 - 2
+            _draw_tool_icon(surface, tool_id, icon_x, icon_y, selected=is_selected)
 
-            # Tool name below the slot
+            # Tool name below slot
             name = TOOL_NAMES[tool_id]
-            txt_surface = self.font_small.render(name, True, C_UI_TEXT)
+            txt_col = C_UI_SELECT if is_selected else C_UI_TEXT
+            txt_surface = self.font_small.render(name, True, txt_col)
             txt_x = sx + (slot_size - txt_surface.get_width()) // 2
-            _blit_text(surface, self.font_small, name,
-                       txt_x, sy + slot_size + 3, C_UI_TEXT)
+            _blit_text(surface, self.font_small, name, txt_x, sy + slot_size + 4, txt_col)
 
     # ------------------------------------------------------------------
     # Notification messages (left side, below clock)
@@ -328,16 +346,24 @@ def _draw_tool_icon(surface: pygame.Surface, tool_id: int,
 
 def _draw_panel(surface: pygame.Surface,
                 x: int, y: int, w: int, h: int,
-                alpha: int = 210):
+                alpha: int = 215):
     """
-    Draw a semi-transparent rounded panel (used for UI backgrounds).
+    Draw a polished semi-transparent rounded panel with inner highlight bevel.
     """
     panel = pygame.Surface((w, h), pygame.SRCALPHA)
-    panel.fill((0, 0, 0, 0))
-    pygame.draw.rect(panel, (*C_UI_BG, alpha),
-                     (0, 0, w, h), border_radius=6)
-    pygame.draw.rect(panel, (*C_UI_BORDER, min(255, alpha + 20)),
-                     (0, 0, w, h), 2, border_radius=6)
+    # Main background fill
+    pygame.draw.rect(panel, (*C_UI_BG, alpha), (0, 0, w, h), border_radius=8)
+    # Subtle inner top-edge highlight (simulates panel thickness)
+    hi_col = (min(255, C_UI_BG[0]+40), min(255, C_UI_BG[1]+32), min(255, C_UI_BG[2]+22))
+    pygame.draw.rect(panel, (*hi_col, min(255, alpha - 50)),
+                     (2, 2, w - 4, 3), border_radius=6)
+    # Outer border
+    pygame.draw.rect(panel, (*C_UI_BORDER, min(255, alpha + 25)),
+                     (0, 0, w, h), 2, border_radius=8)
+    # Inner shadow at bottom
+    sh_col = (max(0, C_UI_BG[0]-12), max(0, C_UI_BG[1]-10), max(0, C_UI_BG[2]-8))
+    pygame.draw.rect(panel, (*sh_col, min(255, alpha - 30)),
+                     (2, h - 4, w - 4, 2), border_radius=4)
     surface.blit(panel, (x, y))
 
 

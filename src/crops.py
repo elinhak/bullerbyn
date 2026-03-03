@@ -110,86 +110,100 @@ class Crop:
 # ---------------------------------------------------------------------------
 
 def _draw_seed(surface, cx, cy, T):
-    """Stage 0: A small brown bump in the soil — seed has just been planted."""
-    # Tiny mound of dirt
-    pygame.draw.ellipse(surface, (90, 55, 15),
-                        (cx - 6, cy - 3, 12, 7))
-    # Slightly lighter top to give roundness
-    pygame.draw.ellipse(surface, (110, 70, 25),
-                        (cx - 4, cy - 2, 8, 4))
+    """Stage 0: A small soil mound with a seed peeking out."""
+    # Shadow
+    pygame.draw.ellipse(surface, (60, 35, 8), (cx - 7, cy + 1, 14, 5))
+    # Mound
+    pygame.draw.ellipse(surface, (95, 58, 16), (cx - 6, cy - 3, 12, 8))
+    pygame.draw.ellipse(surface, (118, 76, 28), (cx - 4, cy - 2, 8, 4))
+    # Tiny seed nub at top
+    pygame.draw.circle(surface, (145, 100, 40), (cx, cy - 4), 2)
 
 
 def _draw_sprout(surface, cx, cy, T):
-    """Stage 1: A tiny green shoot peeking out of the soil."""
-    # Small stem
-    pygame.draw.line(surface, (60, 140, 40),
-                     (cx, cy + 6), (cx, cy - 5), 3)
-    # Two small leaves at the top
-    pygame.draw.ellipse(surface, C_CROP_SPROUT,
-                        (cx - 8, cy - 9, 9, 6))    # left leaf
-    pygame.draw.ellipse(surface, C_CROP_SPROUT,
-                        (cx,     cy - 9, 9, 6))    # right leaf
-    # Leaf highlight
-    pygame.draw.ellipse(surface, (110, 195, 85),
-                        (cx - 6, cy - 8, 5, 3))
+    """Stage 1: A fresh bright-green shoot breaking the soil."""
+    stem_col = (55, 145, 38)
+    # Shadow beneath
+    pygame.draw.ellipse(surface, (60, 40, 10), (cx - 5, cy + 4, 10, 4))
+    # Stem
+    pygame.draw.line(surface, stem_col, (cx, cy + 6), (cx, cy - 6), 3)
+    pygame.draw.line(surface, (88, 185, 60), (cx - 1, cy + 4), (cx - 1, cy - 4), 1)
+    # Left leaf
+    pygame.draw.ellipse(surface, C_CROP_SPROUT, (cx - 10, cy - 10, 11, 7))
+    pygame.draw.ellipse(surface, (118, 200, 90), (cx - 9,  cy - 9,  7, 4))
+    # Right leaf
+    pygame.draw.ellipse(surface, C_CROP_SPROUT, (cx - 1, cy - 10, 11, 7))
+    pygame.draw.ellipse(surface, (118, 200, 90), (cx,     cy - 9,  7, 4))
+    # Leaf vein dots
+    pygame.draw.circle(surface, (148, 210, 105), (cx - 5, cy - 7), 1)
+    pygame.draw.circle(surface, (148, 210, 105), (cx + 4, cy - 7), 1)
 
 
 def _draw_growing(surface, cx, cy, T):
-    """Stage 2: A bushy leafy plant, about half-grown."""
-    # Main stem
-    pygame.draw.line(surface, (55, 120, 35),
-                     (cx, cy + 8), (cx, cy - 8), 3)
+    """Stage 2: A bushy leafy plant with visible stem and multiple leaf clusters."""
+    stem_col  = (50, 118, 32)
+    leaf_sh   = (max(0, C_CROP_GROWING[0]-22), max(0, C_CROP_GROWING[1]-18), max(0, C_CROP_GROWING[2]-12))
+    leaf_hi   = (min(255, C_CROP_GROWING[0]+28), min(255, C_CROP_GROWING[1]+24), min(255, C_CROP_GROWING[2]+16))
 
-    # Several leaf clusters radiating outward
-    leaf_positions = [
-        (cx - 13, cy - 4,  13, 8),
-        (cx,      cy - 4,  13, 8),
-        (cx - 8,  cy - 14, 15, 9),
-        (cx - 12, cy + 1,  10, 6),
-        (cx + 2,  cy + 1,  10, 6),
+    # Shadow
+    pygame.draw.ellipse(surface, (50, 32, 8), (cx - 12, cy + 5, 24, 7))
+    # Main stem
+    pygame.draw.line(surface, stem_col, (cx, cy + 9), (cx, cy - 10), 3)
+    pygame.draw.line(surface, (80, 155, 52), (cx - 1, cy + 6), (cx - 1, cy - 8), 1)
+
+    # Leaf clusters — shadow then lit
+    leaves = [
+        (cx - 14, cy - 5,  14, 9),
+        (cx + 1,  cy - 5,  14, 9),
+        (cx - 9,  cy - 16, 18, 10),
+        (cx - 13, cy + 2,  11, 7),
+        (cx + 2,  cy + 2,  11, 7),
     ]
-    for lx, ly, lw, lh in leaf_positions:
+    for lx, ly, lw, lh in leaves:
+        pygame.draw.ellipse(surface, leaf_sh, (lx + 1, ly + 1, lw, lh))
         pygame.draw.ellipse(surface, C_CROP_GROWING, (lx, ly, lw, lh))
 
-    # Lighter green highlights
-    pygame.draw.ellipse(surface, (80, 170, 60),
-                        (cx - 10, cy - 12, 8, 5))
-    pygame.draw.ellipse(surface, (80, 170, 60),
-                        (cx - 6,  cy - 3,  7, 4))
+    # Highlights on uppermost leaves
+    for lx, ly, lw, lh in [(cx - 12, cy - 14, 9, 5), (cx - 6, cy - 4, 7, 4)]:
+        pygame.draw.ellipse(surface, leaf_hi, (lx, ly, lw, lh))
 
 
 def _draw_mature(surface, cx, cy, T):
-    """
-    Stage 3: Full-grown potato plant — dense foliage with a golden-green tint.
-    A small yellow flower indicates it is ready to harvest!
-    """
-    # Main stem (taller than growing stage)
-    pygame.draw.line(surface, (60, 115, 35),
-                     (cx, cy + 10), (cx, cy - 12), 3)
+    """Stage 3: Dense golden-green canopy with harvest flowers on top."""
+    stem_col = (55, 112, 32)
+    leaf_sh  = (max(0, C_CROP_MATURE[0]-24), max(0, C_CROP_MATURE[1]-20), max(0, C_CROP_MATURE[2]-14))
+    leaf_hi  = (min(255, C_CROP_MATURE[0]+30), min(255, C_CROP_MATURE[1]+26), min(255, C_CROP_MATURE[2]+18))
 
-    # Dense leaf canopy (darker green with golden highlights)
+    # Ground shadow
+    pygame.draw.ellipse(surface, (48, 30, 8), (cx - 14, cy + 7, 28, 8))
+    # Main stem
+    pygame.draw.line(surface, stem_col, (cx, cy + 11), (cx, cy - 14), 3)
+    pygame.draw.line(surface, (85, 148, 55), (cx - 1, cy + 8), (cx - 1, cy - 11), 1)
+
+    # Dense canopy — shadow then colour then highlight
     canopy = [
-        (cx - 16, cy - 5,  15, 10),
-        (cx + 1,  cy - 5,  15, 10),
-        (cx - 10, cy - 17, 20, 11),
-        (cx - 14, cy + 2,  12, 8),
-        (cx + 2,  cy + 2,  12, 8),
-        (cx - 6,  cy - 10, 12, 9),
+        (cx - 17, cy - 6,  16, 11),
+        (cx + 1,  cy - 6,  16, 11),
+        (cx - 11, cy - 19, 22, 12),
+        (cx - 15, cy + 3,  13, 9),
+        (cx + 2,  cy + 3,  13, 9),
+        (cx - 7,  cy - 12, 14, 10),
     ]
     for lx, ly, lw, lh in canopy:
-        pygame.draw.ellipse(surface, C_CROP_MATURE, (lx, ly, lw, lh))
+        pygame.draw.ellipse(surface, leaf_sh,     (lx + 1, ly + 1, lw, lh))
+        pygame.draw.ellipse(surface, C_CROP_MATURE,(lx,    ly,     lw, lh))
 
-    # Golden-yellow highlights to make it look lush
-    pygame.draw.ellipse(surface, (205, 195, 55),
-                        (cx - 8, cy - 15, 10, 6))
-    pygame.draw.ellipse(surface, (205, 195, 55),
-                        (cx - 5, cy - 4,  8, 5))
+    # Highlight patches
+    for lx, ly, lw, lh in [(cx - 9, cy - 17, 11, 6), (cx - 6, cy - 5, 8, 5)]:
+        pygame.draw.ellipse(surface, leaf_hi, (lx, ly, lw, lh))
 
-    # Small white flower at the top — signals "ready to harvest!"
-    pygame.draw.circle(surface, (255, 240, 200), (cx,     cy - 19), 4)
-    pygame.draw.circle(surface, (255, 210, 50),  (cx,     cy - 19), 2)
-    pygame.draw.circle(surface, (255, 240, 200), (cx - 4, cy - 17), 3)
-    pygame.draw.circle(surface, (255, 240, 200), (cx + 4, cy - 17), 3)
+    # Harvest flowers — white petals + golden centre
+    flower_positions = [(cx, cy - 21), (cx - 5, cy - 18), (cx + 5, cy - 19)]
+    for fx, fy in flower_positions:
+        for pdx, pdy in [(0, -4), (3, -3), (4, 0), (3, 3), (0, 4), (-3, 3), (-4, 0), (-3, -3)]:
+            pygame.draw.circle(surface, (255, 242, 205), (fx + pdx, fy + pdy), 2)
+        pygame.draw.circle(surface, (255, 215, 50), (fx, fy), 3)
+        pygame.draw.circle(surface, (255, 240, 120), (fx - 1, fy - 1), 1)
 
 
 # ---------------------------------------------------------------------------
