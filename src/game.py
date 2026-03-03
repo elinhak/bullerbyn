@@ -22,12 +22,17 @@ import json
 import os
 
 from src.settings import (
-    SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TILE_SIZE,
     C_HOUSE_RED, C_HOUSE_TRIM, C_UI_TEXT, C_UI_GOLD,
     C_FLAG_BLUE, C_FLAG_YELLOW, C_UI_BG, C_UI_BORDER,
     C_SKY_DAY, SAVE_FILE,
 )
-from src.world import World
+from src.world import (
+    World,
+    _draw_sky_gradient, _draw_farmhouse, _draw_flagpole,
+    _draw_tree, _draw_tree_shadow, _draw_bush, _draw_bush_shadow,
+)
+from src.tilemap import _draw_tile, T_GRASS, T_GRASS_FLOWER, T_PATH
 from src.ui    import UI, _draw_panel, _blit_text
 
 # Game state constants
@@ -234,116 +239,136 @@ class Game:
 
     def _draw_title(self):
         """
-        Draw a charming title screen with the game logo and instructions.
-        Features a simple animated sky and Swedish farmhouse silhouette.
+        Draw the title screen using the same drawing functions as the game world,
+        so the scene looks like a real snapshot of Bullerbyn.
         """
         import math
 
         screen = self.screen
         t      = self._title_timer
+        T      = TILE_SIZE
 
-        # -- Animated sky gradient (top half) --
-        for y in range(SCREEN_HEIGHT // 2):
-            # Blend from light golden-yellow to sky blue as y increases
-            f = y / (SCREEN_HEIGHT // 2)
-            r = int(200 - f * 90)
-            g = int(170 + f * 10)
-            b = int(90  + f * 140)
-            pygame.draw.line(screen, (r, g, b), (0, y), (SCREEN_WIDTH, y))
+        # ---- Sky (same gradient as in-game) ----
+        _draw_sky_gradient(screen, C_SKY_DAY)
 
-        # -- Rolling green hills (bottom half) --
-        for y in range(SCREEN_HEIGHT // 2, SCREEN_HEIGHT):
-            f = (y - SCREEN_HEIGHT // 2) / (SCREEN_HEIGHT // 2)
-            g_val = int(130 + f * 40)
-            pygame.draw.line(screen, (40, g_val, 50),
-                             (0, y), (SCREEN_WIDTH, y))
+        # ---- Ground: grass tiles below the horizon line ----
+        horizon_y = 400
+        cols = SCREEN_WIDTH  // T + 2
+        rows = (SCREEN_HEIGHT - horizon_y) // T + 2
+        for row_i in range(rows):
+            for col_i in range(cols):
+                sx_ = col_i * T
+                sy_ = horizon_y + row_i * T
+                # Path strip at the very top of the ground
+                if row_i == 0:
+                    tile_id = T_PATH
+                else:
+                    h = (col_i * 2654435761 + (row_i + 50) * 2246822519) & 0xFFFFFFFF
+                    tile_id = T_GRASS_FLOWER if h % 100 < 8 else T_GRASS
+                _draw_tile(screen, pygame.Rect(sx_, sy_, T, T), tile_id, col_i, row_i + 50)
 
-        # -- Silhouette of a farmhouse (simple dark shape) --
-        house_x = SCREEN_WIDTH // 2 - 200
-        house_y = SCREEN_HEIGHT // 2 - 60
-        house_w = 160
-        house_h = 100
-        dark_red = (60, 15, 18)
+        # ---- Scene layout ----
+        # Farmhouse — left side, sits on the horizon
+        hw, hh = 300, 200
+        hx = 70
+        hy = horizon_y - hh + T // 3
 
-        # Roof triangle
-        roof_pts = [
-            (house_x - 10, house_y + 40),
-            (house_x + house_w // 2, house_y),
-            (house_x + house_w + 10, house_y + 40),
+        # Flagpole — just to the right of the house
+        # _draw_flagpole expects sy such that pole base = sy + T*5
+        fp_sx = hx + hw + 14
+        fp_sy = horizon_y - T * 5
+
+        # Trees — right side and far edges
+        scene_trees = [
+            (SCREEN_WIDTH - 130, horizon_y - T),
+            (SCREEN_WIDTH - 230, horizon_y - T),
+            (SCREEN_WIDTH - 50,  horizon_y - T),
+            (14,                 horizon_y - T),
         ]
-        pygame.draw.polygon(screen, dark_red, roof_pts)
-        # House body
-        pygame.draw.rect(screen, (50, 15, 18),
-                         (house_x, house_y + 35, house_w, house_h - 35))
-        # Windows (lit yellow at night)
-        for wx in [house_x + 20, house_x + 65, house_x + 110]:
-            pygame.draw.rect(screen, (220, 190, 80),
-                             (wx, house_y + 55, 22, 20))
+        # Bushes — near the house and path
+        scene_bushes = [
+            (hx + hw,            horizon_y + T // 3),
+            (hx - T // 2,        horizon_y + T // 2),
+            (fp_sx + T * 3,      horizon_y + T // 4),
+        ]
 
-        # -- Flagpole silhouette --
-        fp_x = house_x + house_w + 30
-        pygame.draw.line(screen, dark_red,
-                         (fp_x, house_y + house_h - 10),
-                         (fp_x, house_y - 40), 4)
-        # Waving flag
-        for i in range(12):
-            wave = int(math.sin(i / 12 * math.pi + t * 2) * 3)
-            pygame.draw.rect(screen, (0, 60, 130),
-                             (fp_x + 4 + i * 4, house_y - 38 + wave, 5, 18))
+        # Draw shadows first (behind everything)
+        for tx_, ty_ in scene_trees:
+            _draw_tree_shadow(screen, tx_, ty_)
+        for bx_, by_ in scene_bushes:
+            _draw_bush_shadow(screen, bx_, by_)
 
-        # -- Animated floating particles (fireflies / dust motes) --
-        for i in range(8):
-            angle = t * 0.5 + i * 0.8
-            px = int(SCREEN_WIDTH * 0.3 + math.sin(angle + i) * 150 + i * 60)
-            py = int(SCREEN_HEIGHT * 0.4 + math.cos(angle * 0.7) * 40 + i * 8)
-            alpha = int(128 + math.sin(t * 2 + i) * 90)
-            c = max(0, min(255, alpha))
-            pygame.draw.circle(screen, (c, c, 60), (px % SCREEN_WIDTH, py), 2)
+        # Farmhouse
+        _draw_farmhouse(screen, hx, hy, hw, hh)
 
-        # -- Game title --
-        title_surf = self.title_font.render("Bullerbyn", True, (255, 245, 210))
-        shadow_surf = self.title_font.render("Bullerbyn", True, (30, 20, 10))
-        tx = SCREEN_WIDTH // 2 - title_surf.get_width() // 2
-        ty = 100
-        # Drop shadow
+        # Flagpole
+        _draw_flagpole(screen, fp_sx, fp_sy, t / 240.0)
+
+        # Trees and bushes
+        for tx_, ty_ in scene_trees:
+            _draw_tree(screen, tx_, ty_)
+        for bx_, by_ in scene_bushes:
+            _draw_bush(screen, bx_, by_)
+
+        # ---- Animated fireflies on the grass ----
+        for i in range(6):
+            angle = t * 0.6 + i * 1.05
+            fx = int(SCREEN_WIDTH * 0.55 + math.sin(angle + i * 0.9) * 200 + i * 40)
+            fy = int(horizon_y + T + math.cos(angle * 0.8 + i) * 20 + i * 14)
+            brightness = int(180 + math.sin(t * 3 + i) * 70)
+            brightness = max(0, min(255, brightness))
+            glow = pygame.Surface((8, 8), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (brightness, brightness, 50, brightness // 2), (4, 4), 4)
+            pygame.draw.circle(glow, (brightness, brightness, 80, brightness),      (4, 4), 2)
+            screen.blit(glow, (fx % SCREEN_WIDTH - 4, fy))
+
+        # ---- Title panel (centred, right half of screen) ----
+        panel_w = 500
+        panel_h = 230
+        panel_x = SCREEN_WIDTH // 2 - panel_w // 2 + 160
+        panel_y = 80
+        _draw_panel(screen, panel_x, panel_y, panel_w, panel_h, alpha=225)
+
+        # Game title
+        title_surf  = self.title_font.render("Bullerbyn", True, (255, 245, 205))
+        shadow_surf = self.title_font.render("Bullerbyn", True, (28, 18, 8))
+        tx = panel_x + panel_w // 2 - title_surf.get_width() // 2
+        ty = panel_y + 22
         screen.blit(shadow_surf, (tx + 3, ty + 3))
         screen.blit(title_surf,  (tx, ty))
 
         # Subtitle
-        sub = self.sub_font.render("A Swedish Farm — 1920s", True, (200, 175, 120))
-        sx_ = SCREEN_WIDTH // 2 - sub.get_width() // 2
-        screen.blit(sub, (sx_, ty + 68))
+        sub = self.sub_font.render("A farming simulator", True, (200, 175, 118))
+        screen.blit(sub, (panel_x + panel_w // 2 - sub.get_width() // 2, ty + 64))
 
-        # Decorative line
-        line_y = ty + 102
+        # Decorative divider line
+        line_y = ty + 100
         pygame.draw.line(screen, (150, 120, 60),
-                         (SCREEN_WIDTH // 2 - 160, line_y),
-                         (SCREEN_WIDTH // 2 + 160, line_y), 2)
+                         (panel_x + 40, line_y), (panel_x + panel_w - 40, line_y), 2)
+        pygame.draw.line(screen, (100, 76, 38),
+                         (panel_x + 40, line_y + 3), (panel_x + panel_w - 40, line_y + 3), 1)
 
-        # -- Instructions --
-        blink = abs(math.sin(t * 2)) > 0.3   # blink on/off
-        if blink:
-            start = self.sub_font.render("Press ENTER to begin", True,
-                                         (220, 200, 140))
-            screen.blit(start, (SCREEN_WIDTH // 2 - start.get_width() // 2,
-                                SCREEN_HEIGHT // 2 + 60))
+        # "Press enter" prompt
+        start = self.sub_font.render("Press ENTER to begin", True, (225, 205, 140))
+        screen.blit(start, (panel_x + panel_w // 2 - start.get_width() // 2,
+                            line_y + 14))
 
-        load_col = (170, 150, 100)
+        # Load hint
         load_txt = self.hint_font.render("Press L to load saved game",
-                                         True, load_col)
-        screen.blit(load_txt, (SCREEN_WIDTH // 2 - load_txt.get_width() // 2,
-                                SCREEN_HEIGHT // 2 + 100))
+                                         True, (165, 145, 95))
+        screen.blit(load_txt, (panel_x + panel_w // 2 - load_txt.get_width() // 2,
+                                line_y + 48))
 
-        # -- How-to-play hint --
+        # ---- How-to-play hints at the bottom ----
         hints = [
             "Farm potatoes | Sell for gold",
             "WASD to walk  |  1-4 select tool  |  SPACE use tool",
             "F5 to save    |  ESC to pause",
         ]
         for i, hint in enumerate(hints):
-            hs = self.hint_font.render(hint, True, (130, 110, 80))
+            hs = self.hint_font.render(hint, True, (65, 50, 32))
             screen.blit(hs, (SCREEN_WIDTH // 2 - hs.get_width() // 2,
-                             SCREEN_HEIGHT - 80 + i * 18))
+                             SCREEN_HEIGHT - 68 + i * 18))
 
     # ------------------------------------------------------------------
     # Pause Overlay
