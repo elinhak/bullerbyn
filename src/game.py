@@ -20,6 +20,7 @@ This file just decides WHICH state is active and what to do in it.
 import pygame
 import json
 import os
+import datetime
 
 from src.settings import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, TILE_SIZE,
@@ -73,6 +74,9 @@ class Game:
         # Animated decorations on the title screen
         self._title_timer = 0.0
 
+        # Screenshot button — top-right corner, always visible
+        self._screenshot_btn = pygame.Rect(SCREEN_WIDTH - 102, 6, 96, 26)
+
         # Character creation state
         self._char_config  = CharacterConfig()
         self._name_input   = self._char_config.name
@@ -100,7 +104,9 @@ class Game:
                     self._name_input += event.text
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.state == STATE_CHARACTER_CREATION:
+                if self._screenshot_btn.collidepoint(event.pos):
+                    self._take_screenshot()
+                elif self.state == STATE_CHARACTER_CREATION:
                     self._cc_handle_click(event.pos)
 
     def update(self, dt: float):
@@ -128,6 +134,9 @@ class Game:
                 self.world.draw(self.screen)
                 self.ui.draw(self.screen, self.world.player, self.world)
             self._draw_pause_overlay()
+
+        # Screenshot button always drawn on top
+        self._draw_screenshot_btn()
 
     # ------------------------------------------------------------------
     # State transitions
@@ -174,6 +183,54 @@ class Game:
             elif key == pygame.K_q:
                 # Quit to title
                 self.state = STATE_TITLE
+
+    def _draw_screenshot_btn(self):
+        """Draw a small camera button in the top-right corner."""
+        r  = self._screenshot_btn
+        mx, my = pygame.mouse.get_pos()
+        hovered = r.collidepoint(mx, my)
+
+        col_bg = (60, 50, 35) if hovered else (38, 32, 22)
+        col_bd = (160, 130, 70) if hovered else (110, 88, 48)
+        pygame.draw.rect(self.screen, col_bg, r, border_radius=5)
+        pygame.draw.rect(self.screen, col_bd, r, 1, border_radius=5)
+
+        # Camera icon
+        ix = r.x + 7
+        iy = r.y + r.height // 2 - 5
+        body_col = (195, 188, 175)
+        lens_col = (55,  80, 130)
+        lens_hi  = (130, 160, 210)
+        pygame.draw.rect(self.screen, body_col, (ix,     iy + 3, 14,  9), border_radius=2)
+        pygame.draw.rect(self.screen, body_col, (ix + 4, iy,      6,  4))   # viewfinder bump
+        pygame.draw.circle(self.screen, lens_col, (ix + 7, iy + 7), 3)
+        pygame.draw.circle(self.screen, lens_hi,  (ix + 6, iy + 6), 1)
+
+        # Label
+        lbl = self.hint_font.render("Capture", True,
+                                    (230, 210, 150) if hovered else (185, 165, 110))
+        self.screen.blit(lbl, (ix + 18, r.y + r.height // 2 - lbl.get_height() // 2))
+
+    def _take_screenshot(self):
+        """
+        Save the current frame to the screenshots folder.
+        Always writes 'latest.png' (for quick reference) plus a
+        timestamped copy so nothing is ever overwritten.
+        """
+        folder = os.path.join(os.path.dirname(__file__), "..", "screenshots")
+        os.makedirs(folder, exist_ok=True)
+
+        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = f"screenshot_{ts}.png"
+
+        pygame.image.save(self.screen, os.path.join(folder, name))
+        pygame.image.save(self.screen, os.path.join(folder, "latest.png"))
+
+        print(f"[Bullerbyn] Screenshot saved: screenshots/{name}")
+
+        # Show a brief in-game notification if we're playing
+        if self.state == STATE_PLAYING and self.world:
+            self.world._add_notification("Screenshot saved! (F12)")
 
     def _start_new_game(self):
         """Create a fresh world and switch to the playing state."""
