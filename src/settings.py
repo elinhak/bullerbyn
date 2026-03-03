@@ -90,8 +90,8 @@ TIME_NIGHT = 0.83   # ~8:00 PM — dark night
 # Stages are measured in in-game DAYS since planting.
 # You can adjust these numbers to make potatoes grow faster or slower.
 POTATO_DAYS_SPROUT  = 1    # tiny green shoot appears after 1 day
-POTATO_DAYS_GROWING = 3    # plant gets bigger after 3 days
-POTATO_DAYS_MATURE  = 6    # ready to harvest after 6 days
+POTATO_DAYS_GROWING = 2    # plant gets bigger after 2 days
+POTATO_DAYS_MATURE  = 4    # ready to harvest after 4 days
 
 POTATO_SELL_PRICE = 25     # gold coins earned per harvested potato
 

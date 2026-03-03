@@ -131,17 +131,25 @@ class World:
 
     def _check_sell_zone(self):
         """
-        If the player walks onto the sell zone with potatoes,
-        automatically sell them.
+        If the player is standing adjacent to the market stall with potatoes,
+        automatically sell them.  The stall tiles are solid so the player stops
+        in front; we use a one-tile proximity border to detect that position.
         """
         if self.player.potatoes <= 0:
             return
 
         sz_x = self._sell_zone_col * TILE_SIZE
         sz_y = self._sell_zone_row * TILE_SIZE
-        sell_rect = pygame.Rect(sz_x, sz_y, TILE_SIZE * 2, TILE_SIZE * 2)
+        # Expand the stall footprint by one tile on every side so the sell
+        # triggers when the player is standing right next to the stall.
+        trigger_rect = pygame.Rect(
+            sz_x - TILE_SIZE,
+            sz_y - TILE_SIZE,
+            TILE_SIZE * 4,
+            TILE_SIZE * 4,
+        )
 
-        if self.player.rect.colliderect(sell_rect):
+        if self.player.rect.colliderect(trigger_rect):
             earned = self.player.potatoes * POTATO_SELL_PRICE
             self.player.gold     += earned
             msg = f"Sold {self.player.potatoes} potatoes for {earned} gold!"
@@ -665,34 +673,117 @@ def _draw_bush(surface: pygame.Surface, sx: int, sy: int):
 
 def _draw_sell_zone(surface: pygame.Surface, sx: int, sy: int):
     """
-    Draw a small market table / selling stall.
-    The player walks here to automatically sell their harvested potatoes.
+    Draw a market stall where the player sells harvested potatoes.
+    Spans 2×2 tiles; awning extends one tile above sy.
     """
-    T = TILE_SIZE
+    T  = TILE_SIZE
+    W  = T * 2          # total stall width
 
-    # Table top
-    table_col = (190, 155, 80)
-    pygame.draw.rect(surface, _darken(table_col, 20),
-                     (sx + 2, sy + 10, T * 2 - 4, T - 16))
-    pygame.draw.rect(surface, table_col,
-                     (sx + 4, sy + 8, T * 2 - 8, T - 18))
+    # ---- Vertical support posts ----
+    post_col = (105, 72, 32)
+    post_hi  = _lighten(post_col, 22)
+    for px in (sx + 8, sx + W - 16):
+        pygame.draw.rect(surface, _darken(post_col, 18), (px - 1, sy - T,     8, T + T // 2))
+        pygame.draw.rect(surface, post_col,               (px,     sy - T,     6, T + T // 2))
+        pygame.draw.rect(surface, post_hi,                (px + 1, sy - T + 3, 2, T + T // 2 - 6))
 
-    # Potato sack on the table
-    sack_col = (180, 145, 70)
-    pygame.draw.ellipse(surface, _darken(sack_col, 20),
-                        (sx + T - 14, sy, 28, 20))
-    pygame.draw.ellipse(surface, sack_col,
-                        (sx + T - 12, sy + 1, 24, 18))
+    # ---- Horizontal beam connecting the tops of the posts ----
+    beam_col = (120, 84, 38)
+    pygame.draw.rect(surface, _darken(beam_col, 18), (sx + 8,  sy - T - 1, W - 16, 9))
+    pygame.draw.rect(surface, beam_col,               (sx + 8,  sy - T,     W - 16, 7))
+    pygame.draw.rect(surface, _lighten(beam_col, 18), (sx + 10, sy - T + 1, W - 20, 2))
 
-    # "SELL" sign
-    sign_col = (200, 170, 80)
-    pygame.draw.rect(surface, (80, 55, 20), (sx + 4, sy - 14, T * 2 - 8, 14))
-    pygame.draw.rect(surface, sign_col,     (sx + 6, sy - 12, T * 2 - 12, 10))
+    # ---- Striped awning ----
+    awn_y  = sy - T - 16
+    awn_h  = 18
+    stripe_a = (200, 55, 45)    # Swedish red
+    stripe_b = (235, 228, 210)  # cream
+    n_stripes = 7
+    sw = (W - 18) // n_stripes
+    for i in range(n_stripes):
+        sc = stripe_a if i % 2 == 0 else stripe_b
+        pygame.draw.rect(surface, sc, (sx + 9 + i * sw, awn_y, sw + 1, awn_h))
+    # Awning top edge shadow
+    pygame.draw.rect(surface, _darken(stripe_a, 30), (sx + 9, awn_y, W - 18, 3))
+    # Scalloped fringe along the bottom of the awning
+    fringe_y  = awn_y + awn_h
+    fringe_col = _darken(stripe_a, 10)
+    fringe_n   = 6
+    fw = (W - 18) // fringe_n
+    for i in range(fringe_n):
+        fx = sx + 9 + i * fw
+        pygame.draw.polygon(surface, fringe_col,
+                            [(fx, fringe_y), (fx + fw // 2, fringe_y + 9), (fx + fw, fringe_y)])
+        pygame.draw.polygon(surface, _lighten(fringe_col, 18),
+                            [(fx + 2, fringe_y), (fx + fw // 2, fringe_y + 6), (fx + fw - 2, fringe_y)])
 
+    # ---- Hanging sign on left post ----
+    sgn_x = sx + 16
+    sgn_y = sy - T + 10
+    sgn_w, sgn_h = 38, 26
+    # Hanging cord
+    pygame.draw.line(surface, (90, 62, 26), (sgn_x + sgn_w // 2, sgn_y - 5), (sgn_x + sgn_w // 2, sy - T + 8), 2)
+    # Board shadow
+    pygame.draw.rect(surface, _darken((152, 108, 46), 20), (sgn_x + 2, sgn_y + 2, sgn_w, sgn_h), border_radius=3)
+    # Board
+    pygame.draw.rect(surface, (152, 108, 46), (sgn_x, sgn_y, sgn_w, sgn_h), border_radius=3)
+    pygame.draw.rect(surface, _lighten((152, 108, 46), 22), (sgn_x + 2, sgn_y + 2, sgn_w - 4, 3), border_radius=2)
+    pygame.draw.rect(surface, (190, 148, 72), (sgn_x, sgn_y, sgn_w, sgn_h), 2, border_radius=3)
+    # Potato icon on sign
+    pc = sgn_x + sgn_w // 2
+    py_ = sgn_y + sgn_h // 2 + 2
+    pygame.draw.ellipse(surface, _darken((162, 118, 50), 20), (pc - 10, py_ - 6, 20, 14))
+    pygame.draw.ellipse(surface, (162, 118, 50),              (pc - 10, py_ - 7, 20, 13))
+    pygame.draw.ellipse(surface, _lighten((162, 118, 50), 30),(pc - 7,  py_ - 6, 9,  5))
+    # Small sprout on top of potato icon
+    pygame.draw.line(surface, (55, 140, 38), (pc, py_ - 7), (pc, py_ - 12), 2)
+    pygame.draw.ellipse(surface, (70, 165, 48), (pc - 4, py_ - 14, 5, 4))
+    pygame.draw.ellipse(surface, (70, 165, 48), (pc,     py_ - 14, 5, 4))
+    # Gold coin on sign (price indicator)
+    coin_col = (220, 185, 50)
+    pygame.draw.circle(surface, _darken(coin_col, 18), (sgn_x + sgn_w - 8, sgn_y + 8), 6)
+    pygame.draw.circle(surface, coin_col,               (sgn_x + sgn_w - 9, sgn_y + 7), 6)
+    pygame.draw.circle(surface, _lighten(coin_col, 28), (sgn_x + sgn_w - 11, sgn_y + 5), 3)
+
+    # ---- Table ----
+    tbl_y    = sy + T // 2
+    tbl_h    = 10
+    tbl_col  = (195, 162, 88)
+    cloth_col = (215, 195, 135)
+    # Table shadow
+    pygame.draw.rect(surface, _darken(tbl_col, 30), (sx + 5, tbl_y + 2, W - 10, tbl_h + 2))
+    # Tablecloth surface
+    pygame.draw.rect(surface, _darken(cloth_col, 14), (sx + 4, tbl_y,     W - 8, tbl_h + 2))
+    pygame.draw.rect(surface, cloth_col,               (sx + 4, tbl_y,     W - 8, tbl_h))
+    pygame.draw.rect(surface, _lighten(cloth_col, 22), (sx + 6, tbl_y + 1, W - 12, 2))
+    # Cloth drape at front
+    pygame.draw.rect(surface, _darken(cloth_col, 10), (sx + 4, tbl_y + tbl_h, W - 8, 12))
     # Table legs
-    leg_col = _darken(table_col, 30)
-    pygame.draw.rect(surface, leg_col, (sx + 6,      sy + T - 8, 6, 10))
-    pygame.draw.rect(surface, leg_col, (sx + T*2 - 12, sy + T - 8, 6, 10))
+    leg_col = _darken(tbl_col, 38)
+    for lx in (sx + 10, sx + W - 17):
+        pygame.draw.rect(surface, leg_col, (lx, tbl_y + tbl_h + 12, 7, T // 2 - 4))
+
+    # ---- Potato pile on the table ----
+    pot_col = (162, 118, 50)
+    pot_hi  = _lighten(pot_col, 35)
+    pot_sh  = _darken(pot_col, 28)
+    for px, py2, pr in [
+        (sx + T - 12, tbl_y - 10, 10),
+        (sx + T + 2,  tbl_y - 8,   9),
+        (sx + T - 22, tbl_y - 6,   8),
+        (sx + T + 14, tbl_y - 7,   9),
+        (sx + T - 6,  tbl_y - 18,  8),
+    ]:
+        pygame.draw.circle(surface, pot_sh,  (px + 2, py2 + 3), pr)
+        pygame.draw.circle(surface, pot_col, (px,     py2),     pr)
+        pygame.draw.circle(surface, pot_hi,  (px - 3, py2 - 3), pr // 3 + 1)
+
+    # ---- Gold coin pile beside potatoes ----
+    for cx_, cy_, cr in [(sx + W - 20, tbl_y - 9, 7), (sx + W - 17, tbl_y - 5, 7),
+                          (sx + W - 23, tbl_y - 5, 6)]:
+        pygame.draw.circle(surface, _darken(coin_col, 22), (cx_ + 1, cy_ + 1), cr)
+        pygame.draw.circle(surface, coin_col,               (cx_,     cy_),     cr)
+        pygame.draw.circle(surface, _lighten(coin_col, 30), (cx_ - 2, cy_ - 2), cr // 3 + 1)
 
 
 # ---------------------------------------------------------------------------

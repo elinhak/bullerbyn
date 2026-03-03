@@ -441,4 +441,11 @@ def generate_map():
         for col in range(48, 56):
             tiles[row][col] = T_WATER
 
+    # -- 8. Market stall (impassable — 2×2 tiles beside the farmhouse) -
+    stall_col = HOUSE_COL + HOUSE_COLS + 1
+    stall_row = HOUSE_ROW + HOUSE_ROWS - 2
+    for r in range(stall_row, stall_row + 2):
+        for c in range(stall_col, stall_col + 2):
+            tiles[r][c] = T_HOUSE_FLOOR
+
     return tiles, farm
