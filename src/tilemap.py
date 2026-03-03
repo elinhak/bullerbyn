@@ -384,10 +384,11 @@ def generate_map():
         tiles[11][col] = T_PATH
         tiles[12][col] = T_PATH
 
-    # -- 3. Vertical path from house door down to main path (col 8–9) --
+    # -- 3. Vertical path from house door down to main path (col 7–8) --
+    # Door centre is at world x=384 (col 8 left edge); cols 7+8 span 336–432, centre=384
     for row in range(HOUSE_ROW + HOUSE_ROWS, 12):
+        tiles[row][7] = T_PATH
         tiles[row][8] = T_PATH
-        tiles[row][9] = T_PATH
 
     # -- 4. Vertical path from main path down to farm gate (col 22–23) -
     for row in range(12, FARM_ROW + 1):

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 saves/
+screenshots/
 *.log
 .venv/
 venv/
