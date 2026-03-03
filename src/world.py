@@ -50,10 +50,10 @@ class World:
     Call draw(surface) each frame to render everything.
     """
 
-    def __init__(self):
+    def __init__(self, char_config=None):
         self.tilemap    = TileMap()
         self.crop_mgr   = CropManager()
-        self.player     = Player()
+        self.player     = Player(char_config=char_config)
         self.camera     = Camera()
 
         # Day counter (starts on Day 1)

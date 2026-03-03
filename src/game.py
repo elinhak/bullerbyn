@@ -34,11 +34,15 @@ from src.world import (
 )
 from src.tilemap import _draw_tile, T_GRASS, T_GRASS_FLOWER, T_PATH
 from src.ui    import UI, _draw_panel, _blit_text
+from src.player import (
+    CharacterConfig, SHIRT_COLORS, PANTS_COLORS, draw_character_preview,
+)
 
 # Game state constants
-STATE_TITLE   = "title"
-STATE_PLAYING = "playing"
-STATE_PAUSED  = "paused"
+STATE_TITLE              = "title"
+STATE_PLAYING            = "playing"
+STATE_PAUSED             = "paused"
+STATE_CHARACTER_CREATION = "char_creation"
 
 
 class Game:
@@ -69,6 +73,12 @@ class Game:
         # Animated decorations on the title screen
         self._title_timer = 0.0
 
+        # Character creation state
+        self._char_config  = CharacterConfig()
+        self._name_input   = self._char_config.name
+        self._name_active  = False
+        self._cc_rects     = {}   # interactive rect map built during draw
+
     # ------------------------------------------------------------------
     # Public interface called by main.py
     # ------------------------------------------------------------------
@@ -83,7 +93,15 @@ class Game:
                 raise SystemExit
 
             elif event.type == pygame.KEYDOWN:
-                self._on_keydown(event.key)
+                self._on_keydown(event.key, event)
+
+            elif event.type == pygame.TEXTINPUT:
+                if self.state == STATE_CHARACTER_CREATION and self._name_active:
+                    self._name_input += event.text
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.state == STATE_CHARACTER_CREATION:
+                    self._cc_handle_click(event.pos)
 
     def update(self, dt: float):
         """Advance the game state by dt seconds."""
@@ -96,6 +114,9 @@ class Game:
         """Render the current game state to the screen."""
         if self.state == STATE_TITLE:
             self._draw_title()
+
+        elif self.state == STATE_CHARACTER_CREATION:
+            self._draw_character_creation()
 
         elif self.state == STATE_PLAYING and self.world is not None:
             self.world.draw(self.screen)
@@ -112,14 +133,29 @@ class Game:
     # State transitions
     # ------------------------------------------------------------------
 
-    def _on_keydown(self, key: int):
+    def _on_keydown(self, key: int, event=None):
         """Handle a key-press event according to the current state."""
 
         if self.state == STATE_TITLE:
             if key == pygame.K_RETURN or key == pygame.K_SPACE:
-                self._start_new_game()
+                # Go to character creation instead of jumping straight into game
+                self._char_config = CharacterConfig()
+                self._name_input  = self._char_config.name
+                self._name_active = False
+                self._cc_rects    = {}
+                self.state = STATE_CHARACTER_CREATION
             elif key == pygame.K_l:
                 self._try_load_game()
+
+        elif self.state == STATE_CHARACTER_CREATION:
+            if key == pygame.K_RETURN or key == pygame.K_KP_ENTER:
+                self._char_config.name = self._name_input.strip() or "Farmer"
+                self._start_new_game()
+            elif key == pygame.K_ESCAPE:
+                self.state = STATE_TITLE
+            elif key == pygame.K_BACKSPACE:
+                if self._name_active:
+                    self._name_input = self._name_input[:-1]
 
         elif self.state == STATE_PLAYING:
             if key == pygame.K_ESCAPE:
@@ -141,7 +177,7 @@ class Game:
 
     def _start_new_game(self):
         """Create a fresh world and switch to the playing state."""
-        self.world = World()
+        self.world = World(char_config=self._char_config)
         self.state = STATE_PLAYING
 
     # ------------------------------------------------------------------
@@ -169,6 +205,7 @@ class Game:
         data = {
             "day":       w.day_number,
             "time":      w._day_timer,
+            "character": p.char_config.to_dict(),
             "player": {
                 "x":        p.x,
                 "y":        p.y,
@@ -202,7 +239,9 @@ class Game:
             with open(SAVE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            self.world = World()
+            char_cfg = CharacterConfig.from_dict(data.get("character", {}))
+            self._char_config = char_cfg
+            self.world = World(char_config=char_cfg)
             w = self.world
             p = w.player
 
@@ -369,6 +408,225 @@ class Game:
             hs = self.hint_font.render(hint, True, (65, 50, 32))
             screen.blit(hs, (SCREEN_WIDTH // 2 - hs.get_width() // 2,
                              SCREEN_HEIGHT - 68 + i * 18))
+
+    # ------------------------------------------------------------------
+    # Character Creation Screen
+    # ------------------------------------------------------------------
+
+    def _draw_character_creation(self):
+        """
+        Draw the character creation screen over the scenic backdrop.
+        Also rebuilds self._cc_rects so mouse clicks can be hit-tested.
+        """
+        import math
+
+        screen = self.screen
+        t      = self._title_timer
+        T      = TILE_SIZE
+        rects  = {}   # key → pygame.Rect
+
+        # ---- Reuse the title backdrop ----
+        _draw_sky_gradient(screen, C_SKY_DAY)
+        horizon_y = 400
+        cols = SCREEN_WIDTH  // T + 2
+        rows = (SCREEN_HEIGHT - horizon_y) // T + 2
+        for row_i in range(rows):
+            for col_i in range(cols):
+                sx_ = col_i * T
+                sy_ = horizon_y + row_i * T
+                tile_id = T_PATH if row_i == 0 else (
+                    T_GRASS_FLOWER if ((col_i * 2654435761 + (row_i + 50) * 2246822519) & 0xFFFFFFFF) % 100 < 8
+                    else T_GRASS
+                )
+                _draw_tile(screen, pygame.Rect(sx_, sy_, T, T), tile_id, col_i, row_i + 50)
+
+        hw, hh = 300, 200
+        hx, hy = 70, horizon_y - hh + T // 3
+        fp_sx  = hx + hw + 14
+        fp_sy  = horizon_y - T * 5
+        scene_trees  = [(SCREEN_WIDTH - 130, horizon_y - T), (SCREEN_WIDTH - 230, horizon_y - T),
+                        (SCREEN_WIDTH - 50, horizon_y - T), (14, horizon_y - T)]
+        scene_bushes = [(hx + hw, horizon_y + T // 3), (hx - T // 2, horizon_y + T // 2),
+                        (fp_sx + T * 3, horizon_y + T // 4)]
+
+        for tx_, ty_ in scene_trees:  _draw_tree_shadow(screen, tx_, ty_)
+        for bx_, by_ in scene_bushes: _draw_bush_shadow(screen, bx_, by_)
+        _draw_farmhouse(screen, hx, hy, hw, hh)
+        _draw_flagpole(screen, fp_sx, fp_sy, t / 240.0)
+        for tx_, ty_ in scene_trees:  _draw_tree(screen, tx_, ty_)
+        for bx_, by_ in scene_bushes: _draw_bush(screen, bx_, by_)
+
+        # Dim backdrop
+        dim = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 80))
+        screen.blit(dim, (0, 0))
+
+        cfg = self._char_config
+
+        # ---- Left panel — preview ----
+        lp_w, lp_h = 240, 340
+        lp_x = SCREEN_WIDTH // 2 - lp_w - 16
+        lp_y = (SCREEN_HEIGHT - lp_h) // 2
+        _draw_panel(screen, lp_x, lp_y, lp_w, lp_h, alpha=230)
+
+        hdr = self.sub_font.render("Your Farmer", True, C_UI_GOLD)
+        screen.blit(hdr, (lp_x + lp_w // 2 - hdr.get_width() // 2, lp_y + 12))
+
+        # Preview sprite (scale 4×)
+        prev_cx = lp_x + lp_w // 2
+        prev_cy = lp_y + 160
+        draw_character_preview(screen, prev_cx, prev_cy, cfg, scale=4)
+
+        # Name below preview
+        name_surf = self.sub_font.render(cfg.name or "_", True, C_UI_TEXT)
+        screen.blit(name_surf, (lp_x + lp_w // 2 - name_surf.get_width() // 2, lp_y + 280))
+
+        # ---- Right panel — form ----
+        rp_w, rp_h = 380, 400
+        rp_x = SCREEN_WIDTH // 2 + 16
+        rp_y = (SCREEN_HEIGHT - rp_h) // 2
+        _draw_panel(screen, rp_x, rp_y, rp_w, rp_h, alpha=230)
+
+        hdr2 = self.sub_font.render("Create Your Farmer", True, C_UI_GOLD)
+        screen.blit(hdr2, (rp_x + rp_w // 2 - hdr2.get_width() // 2, rp_y + 12))
+
+        cy_  = rp_y + 50
+        pad  = 16
+        lbl_col = C_UI_TEXT
+        sel_col = (255, 230, 80)     # gold highlight for selected option
+
+        def label(text, y):
+            s = self.hint_font.render(text, True, lbl_col)
+            screen.blit(s, (rp_x + pad, y))
+
+        def btn(text, bx, by, bw, bh, active, key):
+            col_bg  = (100, 80, 40) if active else (55, 45, 30)
+            col_txt = sel_col       if active else C_UI_TEXT
+            r = pygame.Rect(bx, by, bw, bh)
+            pygame.draw.rect(screen, col_bg,  r, border_radius=4)
+            pygame.draw.rect(screen, (150, 120, 60), r, 1, border_radius=4)
+            ts = self.hint_font.render(text, True, col_txt)
+            screen.blit(ts, (bx + bw // 2 - ts.get_width() // 2, by + bh // 2 - ts.get_height() // 2))
+            rects[key] = r
+
+        # -- Name field --
+        label("Name:", cy_)
+        nf_x = rp_x + pad + 50
+        nf_w = rp_w - pad * 2 - 50
+        nf_h = 22
+        nf_r = pygame.Rect(nf_x, cy_, nf_w, nf_h)
+        nf_col = (80, 65, 40) if self._name_active else (50, 42, 28)
+        pygame.draw.rect(screen, nf_col, nf_r, border_radius=3)
+        pygame.draw.rect(screen, (150, 120, 60), nf_r, 1, border_radius=3)
+        cursor = "|" if self._name_active and int(t * 2) % 2 == 0 else ""
+        nf_txt = self.hint_font.render(self._name_input + cursor, True, C_UI_TEXT)
+        screen.blit(nf_txt, (nf_x + 4, cy_ + 4))
+        rects["name_field"] = nf_r
+        cy_ += 34
+
+        # -- Sex --
+        label("Sex:", cy_)
+        btn("Male",   rp_x + pad + 50,      cy_, 70, 22, cfg.sex == "male",   "sex_male")
+        btn("Female", rp_x + pad + 50 + 78, cy_, 70, 22, cfg.sex == "female", "sex_female")
+        cy_ += 34
+
+        # -- Shirt colour --
+        label("Shirt:", cy_ + 4)
+        for i, col in enumerate(SHIRT_COLORS):
+            cx2 = rp_x + pad + 55 + i * 34
+            cy2 = cy_ + 12          # center y — circles sit flush at cy_
+            r   = pygame.Rect(cx2 - 12, cy2 - 12, 24, 24)
+            pygame.draw.ellipse(screen, col, r)
+            if col == cfg.shirt_color:
+                pygame.draw.ellipse(screen, sel_col, r, 3)
+            else:
+                pygame.draw.ellipse(screen, (0, 0, 0, 80), r, 1)
+            rects[f"shirt_{i}"] = r
+        cy_ += 32
+
+        # -- Pants colour --
+        label("Pants:", cy_ + 4)
+        for i, col in enumerate(PANTS_COLORS):
+            cx2 = rp_x + pad + 55 + i * 34
+            cy2 = cy_ + 12          # center y — circles sit flush at cy_
+            r   = pygame.Rect(cx2 - 12, cy2 - 12, 24, 24)
+            pygame.draw.ellipse(screen, col, r)
+            if col == cfg.pants_color:
+                pygame.draw.ellipse(screen, sel_col, r, 3)
+            else:
+                pygame.draw.ellipse(screen, (0, 0, 0, 80), r, 1)
+            rects[f"pants_{i}"] = r
+        cy_ += 32
+
+        # -- Hat toggle --
+        label("Hat:", cy_)
+        btn("ON",  rp_x + pad + 50,      cy_, 60, 22, cfg.has_hat,      "hat_on")
+        btn("OFF", rp_x + pad + 50 + 68, cy_, 60, 22, not cfg.has_hat,  "hat_off")
+        cy_ += 40
+
+        # -- Dice / randomize button --
+        db_w, db_h = 150, 32
+        db_x = rp_x + pad
+        db_y = cy_
+        db_r = pygame.Rect(db_x, db_y, db_w, db_h)
+        pygame.draw.rect(screen, (75, 58, 32), db_r, border_radius=6)
+        pygame.draw.rect(screen, (160, 128, 64), db_r, 2, border_radius=6)
+        rects["randomize"] = db_r
+
+        # Dice face (20×20) — shows ⚄ (five dots)
+        di_x = db_x + 6
+        di_y = db_y + 6
+        di_s = 20
+        pygame.draw.rect(screen, (235, 228, 210), (di_x, di_y, di_s, di_s), border_radius=3)
+        pygame.draw.rect(screen, (100, 76, 38),   (di_x, di_y, di_s, di_s), 1, border_radius=3)
+        dot = (50, 38, 22)
+        for dx, dy in [(4, 4), (12, 4), (8, 10), (4, 16), (12, 16)]:
+            pygame.draw.circle(screen, dot, (di_x + dx, di_y + dy), 2)
+
+        # "Randomize" label next to the die
+        rnd_s = self.hint_font.render("Randomize", True, (220, 195, 120))
+        screen.blit(rnd_s, (db_x + di_s + 12, db_y + db_h // 2 - rnd_s.get_height() // 2))
+
+        cy_ += db_h + 10
+        enter_s = self.sub_font.render("ENTER — Begin!", True, (225, 205, 140))
+        screen.blit(enter_s, (rp_x + rp_w // 2 - enter_s.get_width() // 2, cy_))
+
+        # Persist rects for click handling
+        self._cc_rects = rects
+
+    def _cc_handle_click(self, pos):
+        """Handle a mouse click on the character creation screen."""
+        rects = self._cc_rects
+        cfg   = self._char_config
+
+        if "name_field" in rects and rects["name_field"].collidepoint(pos):
+            self._name_active = True
+            return
+        else:
+            self._name_active = False
+
+        if "randomize" in rects and rects["randomize"].collidepoint(pos):
+            cfg.randomize()
+            self._name_input = cfg.name
+            return
+        if "sex_male"   in rects and rects["sex_male"].collidepoint(pos):
+            cfg.sex = "male";   return
+        if "sex_female" in rects and rects["sex_female"].collidepoint(pos):
+            cfg.sex = "female"; return
+        if "hat_on"  in rects and rects["hat_on"].collidepoint(pos):
+            cfg.has_hat = True;  return
+        if "hat_off" in rects and rects["hat_off"].collidepoint(pos):
+            cfg.has_hat = False; return
+
+        for i in range(len(SHIRT_COLORS)):
+            key = f"shirt_{i}"
+            if key in rects and rects[key].collidepoint(pos):
+                cfg.shirt_color = SHIRT_COLORS[i]; return
+
+        for i in range(len(PANTS_COLORS)):
+            key = f"pants_{i}"
+            if key in rects and rects[key].collidepoint(pos):
+                cfg.pants_color = PANTS_COLORS[i]; return
 
     # ------------------------------------------------------------------
     # Pause Overlay
