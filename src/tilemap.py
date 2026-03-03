@@ -160,7 +160,7 @@ class TileMap:
                 rect = pygame.Rect(sx, sy, TILE_SIZE, TILE_SIZE)
 
                 # Draw the base tile
-                _draw_tile(surface, rect, tile_id)
+                _draw_tile(surface, rect, tile_id, col, row)
 
                 # Draw farm soil overlay on top of base tile
                 farm_state = self.farm[row][col]
@@ -172,24 +172,25 @@ class TileMap:
 # Internal drawing functions
 # ---------------------------------------------------------------------------
 
-def _draw_tile(surface: pygame.Surface, rect: pygame.Rect, tile_id: int):
+def _draw_tile(surface: pygame.Surface, rect: pygame.Rect, tile_id: int,
+               col: int = 0, row: int = 0):
     """
     Draw a single base tile into the given screen rect.
     All visual logic for each tile type lives here.
+    col, row are the world-space tile coordinates (used for stable patterns).
     """
     T = TILE_SIZE  # shorthand
 
     if tile_id in (T_GRASS, T_GRASS_FLOWER):
         # Checkerboard of two slightly different greens for visual texture
-        col_tile = rect.x // T
-        row_tile = rect.y // T
-        colour = C_GRASS_1 if (col_tile + row_tile) % 2 == 0 else C_GRASS_2
+        # Use world-space col/row so the pattern stays fixed as the camera scrolls
+        colour = C_GRASS_1 if (col + row) % 2 == 0 else C_GRASS_2
         pygame.draw.rect(surface, colour, rect)
 
         if tile_id == T_GRASS_FLOWER:
             # Tiny wildflower dots scattered across the tile
             cx, cy = rect.centerx, rect.centery
-            fc = C_FLOWERS_R if (col_tile * 3 + row_tile) % 3 == 0 else C_FLOWERS_Y
+            fc = C_FLOWERS_R if (col * 3 + row) % 3 == 0 else C_FLOWERS_Y
             # Draw a few small dots to suggest flowers
             for dx, dy in [(-8, -5), (6, 4), (-3, 7), (9, -8)]:
                 pygame.draw.circle(surface, fc, (cx + dx, cy + dy), 2)
@@ -222,9 +223,7 @@ def _draw_tile(surface: pygame.Surface, rect: pygame.Rect, tile_id: int):
                      T_FENCE_TL, T_FENCE_TR, T_FENCE_BL, T_FENCE_BR,
                      T_FENCE_GATE):
         # Draw grass beneath fence posts so the ground shows through
-        col_tile = rect.x // T
-        row_tile = rect.y // T
-        base_colour = C_GRASS_1 if (col_tile + row_tile) % 2 == 0 else C_GRASS_2
+        base_colour = C_GRASS_1 if (col + row) % 2 == 0 else C_GRASS_2
         pygame.draw.rect(surface, base_colour, rect)
         _draw_fence_segment(surface, rect, tile_id)
 
