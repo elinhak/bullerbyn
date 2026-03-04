@@ -103,9 +103,23 @@ class Game:
                 if self.state == STATE_CHARACTER_CREATION and self._name_active:
                     self._name_input += event.text
 
+            elif event.type == pygame.MOUSEWHEEL:
+                if self.state == STATE_PLAYING and self.world:
+                    if event.y > 0:
+                        self.world.zoom_in()
+                    elif event.y < 0:
+                        self.world.zoom_out()
+
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if self._screenshot_btn.collidepoint(event.pos):
                     self._take_screenshot()
+                elif self.state == STATE_PLAYING and self.world:
+                    if (self.ui.zoom_btn_minus and
+                            self.ui.zoom_btn_minus.collidepoint(event.pos)):
+                        self.world.zoom_out()
+                    elif (self.ui.zoom_btn_plus and
+                            self.ui.zoom_btn_plus.collidepoint(event.pos)):
+                        self.world.zoom_in()
                 elif self.state == STATE_CHARACTER_CREATION:
                     self._cc_handle_click(event.pos)
 
@@ -127,6 +141,7 @@ class Game:
         elif self.state == STATE_PLAYING and self.world is not None:
             self.world.draw(self.screen)
             self.ui.draw(self.screen, self.world.player, self.world)
+            self._draw_zoom_indicator()
 
         elif self.state == STATE_PAUSED:
             # Draw the world dimmed, then the pause overlay
@@ -183,6 +198,43 @@ class Game:
             elif key == pygame.K_q:
                 # Quit to title
                 self.state = STATE_TITLE
+
+    def _draw_zoom_indicator(self):
+        """
+        Draw five dots in the bottom-right corner showing the current zoom level.
+        Filled dots = zoomed in steps taken; hollow = steps remaining.
+        """
+        if self.world is None:
+            return
+        levels  = len(self.world._ZOOM_VIEWS)   # 5
+        current = self.world.zoom_level
+
+        dot_r   = 5
+        gap     = 14
+        total_w = levels * gap
+        x0 = SCREEN_WIDTH  - total_w - 12
+        y0 = SCREEN_HEIGHT - 22
+
+        # Background pill
+        pill = pygame.Rect(x0 - 6, y0 - 6, total_w + 6, dot_r * 2 + 10)
+        bg   = pygame.Surface(pill.size, pygame.SRCALPHA)
+        bg.fill((0, 0, 0, 110))
+        self.screen.blit(bg, pill.topleft)
+
+        for i in range(levels):
+            cx = x0 + i * gap + dot_r
+            cy = y0 + dot_r
+            if i < current:
+                # Filled — zoomed in this many steps
+                pygame.draw.circle(self.screen, (220, 185, 90), (cx, cy), dot_r)
+            else:
+                # Hollow — steps still available
+                pygame.draw.circle(self.screen, (120, 100, 55), (cx, cy), dot_r, 1)
+
+        # Scroll hint (only shown at default zoom so the player discovers the feature)
+        if current == 0:
+            hint = self.hint_font.render("scroll to zoom", True, (140, 120, 70))
+            self.screen.blit(hint, (x0 - hint.get_width() - 8, y0))
 
     def _draw_screenshot_btn(self):
         """Draw a small camera button in the top-right corner."""

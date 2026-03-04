@@ -50,11 +50,26 @@ class World:
     Call draw(surface) each frame to render everything.
     """
 
+    # Five zoom levels: (world pixels wide, world pixels tall) rendered before
+    # being scaled up to the 1280×720 display.  Level 0 is the default (no
+    # scaling).  Level 4 is the closest view: exactly 20 tiles wide.
+    _ZOOM_VIEWS = [
+        (1280, 720),   # level 0 — default, ~26.7 × 15 tiles
+        (1200, 675),   # level 1
+        (1120, 630),   # level 2
+        (1040, 585),   # level 3
+        ( 960, 540),   # level 4 — closest, 20 × 11.25 tiles
+    ]
+
     def __init__(self, char_config=None):
         self.tilemap    = TileMap()
         self.crop_mgr   = CropManager()
         self.player     = Player(char_config=char_config)
         self.camera     = Camera()
+
+        # Zoom: 0 = furthest (default), 4 = closest
+        self.zoom_level = 0
+        self._zoom_surf = None   # allocated on first zoomed draw
 
         # Day counter (starts on Day 1)
         self.day_number = 1
@@ -111,6 +126,10 @@ class World:
         self._check_sell_zone()
 
         # -- Camera follows player --
+        # Keep camera viewport in sync with current zoom level
+        vis_w, vis_h = self._ZOOM_VIEWS[self.zoom_level]
+        self.camera.view_w = vis_w
+        self.camera.view_h = vis_h
         px = self.player.x + self.player.rect.width  // 2
         py = self.player.y + self.player.rect.height // 2
         self.camera.center_on(px, py)
@@ -164,11 +183,19 @@ class World:
             return
         self.notifications.append([message, duration])
 
+    def zoom_in(self):
+        """Step one zoom level closer (scroll up)."""
+        self.zoom_level = min(len(self._ZOOM_VIEWS) - 1, self.zoom_level + 1)
+
+    def zoom_out(self):
+        """Step one zoom level further away (scroll down)."""
+        self.zoom_level = max(0, self.zoom_level - 1)
+
     # ------------------------------------------------------------------
     # Draw
     # ------------------------------------------------------------------
 
-    def draw(self, surface: pygame.Surface):
+    def draw(self, screen: pygame.Surface):
         """
         Render the complete scene in the correct layer order:
           1. Sky background
@@ -181,16 +208,31 @@ class World:
           8. Sell-zone marker
           9. Player character
          10. Night darkness overlay
+
+        When zoomed in (zoom_level > 0) the scene is rendered into a smaller
+        surface then scaled up to the full screen, giving a pixel-perfect
+        magnification without touching any of the individual draw routines.
         """
+        vis_w, vis_h = self._ZOOM_VIEWS[self.zoom_level]
+
+        if self.zoom_level == 0:
+            # No zoom — draw straight to screen as before
+            target = screen
+        else:
+            # Allocate / reuse a surface the size of the visible world area
+            if self._zoom_surf is None or self._zoom_surf.get_size() != (vis_w, vis_h):
+                self._zoom_surf = pygame.Surface((vis_w, vis_h))
+            target = self._zoom_surf
+
         # 1. Sky gradient (darker at zenith, lighter at horizon)
         sky_colour = self._get_sky_colour()
-        _draw_sky_gradient(surface, sky_colour)
+        _draw_sky_gradient(target, sky_colour)
 
         # 2 & 3. Tilemap (ground + farm soil)
-        self.tilemap.draw(surface, self.camera)
+        self.tilemap.draw(target, self.camera)
 
         # 4. Crops
-        self.crop_mgr.draw(surface, self.camera)
+        self.crop_mgr.draw(target, self.camera)
 
         # 5a. Tree/bush drop shadows (drawn before canopy so they appear on ground)
         for (col, row, kind) in self._trees:
@@ -199,9 +241,9 @@ class World:
             if self.camera.is_visible(wx, wy, TILE_SIZE * 2, TILE_SIZE * 3):
                 sx, sy = self.camera.apply(wx, wy)
                 if kind == "tree":
-                    _draw_tree_shadow(surface, int(sx), int(sy))
+                    _draw_tree_shadow(target, int(sx), int(sy))
                 elif kind == "bush":
-                    _draw_bush_shadow(surface, int(sx), int(sy))
+                    _draw_bush_shadow(target, int(sx), int(sy))
 
         # 5b. Trees and bushes
         for (col, row, kind) in self._trees:
@@ -210,9 +252,9 @@ class World:
             if self.camera.is_visible(wx, wy, TILE_SIZE * 2, TILE_SIZE * 3):
                 sx, sy = self.camera.apply(wx, wy)
                 if kind == "tree":
-                    _draw_tree(surface, int(sx), int(sy))
+                    _draw_tree(target, int(sx), int(sy))
                 elif kind == "bush":
-                    _draw_bush(surface, int(sx), int(sy))
+                    _draw_bush(target, int(sx), int(sy))
 
         # 6. Farmhouse (drawn over the T_HOUSE_FLOOR tiles)
         hx = HOUSE_COL * TILE_SIZE
@@ -221,30 +263,35 @@ class World:
         hh = HOUSE_ROWS * TILE_SIZE
         if self.camera.is_visible(hx, hy, hw, hh):
             sx, sy = self.camera.apply(hx, hy)
-            _draw_farmhouse(surface, int(sx), int(sy), hw, hh)
+            _draw_farmhouse(target, int(sx), int(sy), hw, hh)
 
         # 7. Flagpole
         fx = FLAG_COL * TILE_SIZE
         fy = FLAG_ROW * TILE_SIZE
         if self.camera.is_visible(fx, fy, TILE_SIZE * 2, TILE_SIZE * 6):
             sx, sy = self.camera.apply(fx, fy)
-            _draw_flagpole(surface, int(sx), int(sy), self.time_of_day)
+            _draw_flagpole(target, int(sx), int(sy), self.time_of_day)
 
         # 8. Sell-zone marker
         szx = self._sell_zone_col * TILE_SIZE
         szy = self._sell_zone_row * TILE_SIZE
         if self.camera.is_visible(szx, szy, TILE_SIZE * 2, TILE_SIZE * 2):
             sx, sy = self.camera.apply(szx, szy)
-            _draw_sell_zone(surface, int(sx), int(sy))
+            _draw_sell_zone(target, int(sx), int(sy))
 
         # 9. Player
-        self.player.draw(surface, self.camera)
+        self.player.draw(target, self.camera)
 
         # 10. Ambient colour tint (warm at dawn/dusk, cool at night)
-        self._draw_ambient_tint(surface)
+        self._draw_ambient_tint(target)
 
         # 11. Night darkness overlay
-        self._draw_night_overlay(surface)
+        self._draw_night_overlay(target)
+
+        # Scale the rendered frame up to the full screen when zoomed in
+        if self.zoom_level != 0:
+            scaled = pygame.transform.scale(target, screen.get_size())
+            screen.blit(scaled, (0, 0))
 
     # ------------------------------------------------------------------
     # Sky and lighting

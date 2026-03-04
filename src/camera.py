@@ -37,22 +37,27 @@ class Camera:
         self.x = 0
         self.y = 0
 
+        # Effective viewport size — shrinks when zoomed in so clamping and
+        # culling remain correct at every zoom level.
+        self.view_w = SCREEN_WIDTH
+        self.view_h = SCREEN_HEIGHT
+
     def center_on(self, world_x: float, world_y: float):
         """
         Move the camera so that the given world position is in the centre of
         the screen.  We then clamp so the camera never goes outside the world.
         """
-        # Put world_x/y in the middle of the screen
-        self.x = world_x - SCREEN_WIDTH  // 2
-        self.y = world_y - SCREEN_HEIGHT // 2
+        # Put world_x/y in the middle of the viewport
+        self.x = world_x - self.view_w // 2
+        self.y = world_y - self.view_h // 2
 
         # Clamp: don't scroll past the left or top edge of the world
         self.x = max(0, self.x)
         self.y = max(0, self.y)
 
         # Clamp: don't scroll past the right or bottom edge of the world
-        self.x = min(self.x, WORLD_WIDTH  - SCREEN_WIDTH)
-        self.y = min(self.y, WORLD_HEIGHT - SCREEN_HEIGHT)
+        self.x = min(self.x, WORLD_WIDTH  - self.view_w)
+        self.y = min(self.y, WORLD_HEIGHT - self.view_h)
 
     def apply(self, world_x: float, world_y: float) -> tuple:
         """
@@ -83,7 +88,7 @@ class Camera:
         margin = 64   # a little extra so edge tiles never pop in/out
         return (
             world_x + width  >= self.x - margin and
-            world_x          <= self.x + SCREEN_WIDTH  + margin and
+            world_x          <= self.x + self.view_w + margin and
             world_y + height >= self.y - margin and
-            world_y          <= self.y + SCREEN_HEIGHT + margin
+            world_y          <= self.y + self.view_h + margin
         )

@@ -56,13 +56,17 @@ class UI:
             except Exception:
                 continue
 
+        # Zoom button rects — set each frame by _draw_inventory, read by game.py
+        self.zoom_btn_minus = None
+        self.zoom_btn_plus  = None
+
     def draw(self, surface: pygame.Surface, player, world):
         """
         Draw the complete HUD on top of the game world.
         Call this AFTER drawing the world so the UI is always on top.
         """
         self._draw_clock(surface, world)
-        self._draw_inventory(surface, player)
+        self._draw_inventory(surface, player, world)
         self._draw_hotbar(surface, player)
         self._draw_notifications(surface, world.notifications)
         self._draw_controls_hint(surface)
@@ -116,13 +120,14 @@ class UI:
     # Inventory panel (top-right)
     # ------------------------------------------------------------------
 
-    def _draw_inventory(self, surface: pygame.Surface, player):
+    def _draw_inventory(self, surface: pygame.Surface, player, world):
         """
         Draw the inventory panel in the top-right corner.
-        Shows: gold coins, potato seeds remaining, harvested potatoes.
+        Shows: gold coins, potato seeds remaining, harvested potatoes,
+        and a zoom +/- control with level dots below.
         """
         panel_w = 200
-        panel_h = 86
+        panel_h = 118   # extra 32 px for the zoom row
         panel_x = SCREEN_WIDTH - panel_w - 12
         panel_y = 12
 
@@ -143,6 +148,55 @@ class UI:
             val_w = self.font_medium.size(val)[0]
             _blit_text(surface, self.font_medium, val,
                        panel_x + panel_w - val_w - 10, iy, text_col)
+
+        # ---- Zoom control row ----
+        divider_y = panel_y + 80
+        pygame.draw.line(surface, C_UI_BORDER,
+                         (panel_x + 8, divider_y), (panel_x + panel_w - 8, divider_y), 1)
+        zoom_lbl = self.font_small.render("Zoom", True, (140, 118, 72))
+        surface.blit(zoom_lbl, (panel_x + panel_w // 2 - zoom_lbl.get_width() // 2, divider_y - 8))
+
+        btn_y  = divider_y + 8
+        btn_w  = 26
+        btn_h  = 22
+        zoom   = world.zoom_level
+        levels = len(world._ZOOM_VIEWS)   # 5
+
+        # Minus button
+        minus_r = pygame.Rect(panel_x + 8, btn_y, btn_w, btn_h)
+        can_out  = zoom > 0
+        mb_col   = (70, 55, 32) if can_out else (40, 32, 20)
+        pygame.draw.rect(surface, mb_col,   minus_r, border_radius=4)
+        pygame.draw.rect(surface, C_UI_BORDER, minus_r, 1, border_radius=4)
+        lbl_col  = C_UI_TEXT if can_out else (80, 65, 42)
+        _blit_text(surface, self.font_medium, "−",
+                   minus_r.x + minus_r.w // 2 - self.font_medium.size("−")[0] // 2,
+                   minus_r.y + 2, lbl_col)
+        self.zoom_btn_minus = minus_r
+
+        # Plus button
+        plus_r  = pygame.Rect(panel_x + panel_w - 8 - btn_w, btn_y, btn_w, btn_h)
+        can_in   = zoom < levels - 1
+        pb_col   = (70, 55, 32) if can_in else (40, 32, 20)
+        pygame.draw.rect(surface, pb_col,   plus_r, border_radius=4)
+        pygame.draw.rect(surface, C_UI_BORDER, plus_r, 1, border_radius=4)
+        lbl_col  = C_UI_TEXT if can_in else (80, 65, 42)
+        _blit_text(surface, self.font_medium, "+",
+                   plus_r.x + plus_r.w // 2 - self.font_medium.size("+")[0] // 2,
+                   plus_r.y + 2, lbl_col)
+        self.zoom_btn_plus = plus_r
+
+        # Zoom level dots between the buttons
+        dot_area_x  = minus_r.right + 4
+        dot_area_w  = plus_r.left - minus_r.right - 8
+        dot_spacing = dot_area_w // levels
+        dot_cy      = btn_y + btn_h // 2
+        for i in range(levels):
+            dot_cx = dot_area_x + i * dot_spacing + dot_spacing // 2
+            if i < zoom:
+                pygame.draw.circle(surface, C_UI_GOLD,   (dot_cx, dot_cy), 5)
+            else:
+                pygame.draw.circle(surface, C_UI_BORDER, (dot_cx, dot_cy), 5, 1)
 
     # ------------------------------------------------------------------
     # Tool hotbar (bottom-centre)
