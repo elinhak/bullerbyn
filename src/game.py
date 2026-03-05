@@ -77,10 +77,11 @@ class Game:
         # Animated decorations on the title screen
         self._title_timer = 0.0
 
-        # Screenshot button — below the inventory panel (top-right), always visible
-        # Inventory panel: x = SCREEN_WIDTH-222, w = 210, h = 254, y = 12
-        # Panel bottom = 266; button sits 8px below with right edge flush to panel.
-        self._screenshot_btn = pygame.Rect(SCREEN_WIDTH - 108, 274, 96, 26)
+        # Screenshot button — two positions:
+        #   _screenshot_btn      : during gameplay (below inventory panel, y=274)
+        #   _screenshot_btn_top  : on title / character-creation screens (top-right, y=8)
+        self._screenshot_btn     = pygame.Rect(SCREEN_WIDTH - 108, 274, 96, 26)
+        self._screenshot_btn_top = pygame.Rect(SCREEN_WIDTH - 108,   8, 96, 26)
 
         # Character creation state
         self._char_config  = CharacterConfig()
@@ -116,7 +117,10 @@ class Game:
                         self.world.zoom_out()
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self._screenshot_btn.collidepoint(event.pos):
+                _active_btn = (self._screenshot_btn_top
+                               if self.state in (STATE_TITLE, STATE_CHARACTER_CREATION)
+                               else self._screenshot_btn)
+                if _active_btn.collidepoint(event.pos):
                     self._take_screenshot()
                 elif self.state == STATE_PLAYING and self.world:
                     if self.world.market_open:
@@ -128,11 +132,19 @@ class Game:
                             self.ui.zoom_btn_plus.collidepoint(event.pos)):
                         self.world.zoom_in()
                     else:
-                        # Seed type selection from inventory
-                        for ctype, rect in self.ui.seed_type_rects.items():
+                        # Tool hotbar click
+                        clicked_tool = False
+                        for tool_id, rect in self.ui.hotbar_rects.items():
                             if rect.collidepoint(event.pos):
-                                self.world.player.selected_seed = ctype
+                                self.world.player.tool = tool_id
+                                clicked_tool = True
                                 break
+                        if not clicked_tool:
+                            # Seed type selection from inventory
+                            for ctype, rect in self.ui.seed_type_rects.items():
+                                if rect.collidepoint(event.pos):
+                                    self.world.player.selected_seed = ctype
+                                    break
                 elif self.state == STATE_CHARACTER_CREATION:
                     self._cc_handle_click(event.pos)
 
@@ -220,8 +232,10 @@ class Game:
                 self.state = STATE_TITLE
 
     def _draw_screenshot_btn(self):
-        """Draw a small camera button in the top-right corner."""
-        r  = self._screenshot_btn
+        """Draw a small camera button; position depends on current state."""
+        r = (self._screenshot_btn_top
+             if self.state in (STATE_TITLE, STATE_CHARACTER_CREATION)
+             else self._screenshot_btn)
         mx, my = pygame.mouse.get_pos()
         hovered = r.collidepoint(mx, my)
 
@@ -655,8 +669,8 @@ class Game:
         for bx_, by_ in scene_bushes:
             _draw_bush_shadow(screen, bx_, by_)
 
-        # Farmhouse
-        _draw_farmhouse(screen, hx, hy, hw, hh)
+        # Farmhouse (pass t so smoke is animated on the title screen)
+        _draw_farmhouse(screen, hx, hy, hw, hh, t)
 
         # Flagpole
         _draw_flagpole(screen, fp_sx, fp_sy, t / 240.0)
@@ -769,7 +783,7 @@ class Game:
 
         for tx_, ty_ in scene_trees:  _draw_tree_shadow(screen, tx_, ty_)
         for bx_, by_ in scene_bushes: _draw_bush_shadow(screen, bx_, by_)
-        _draw_farmhouse(screen, hx, hy, hw, hh)
+        _draw_farmhouse(screen, hx, hy, hw, hh, t)
         _draw_flagpole(screen, fp_sx, fp_sy, t / 240.0)
         for tx_, ty_ in scene_trees:  _draw_tree(screen, tx_, ty_)
         for bx_, by_ in scene_bushes: _draw_bush(screen, bx_, by_)

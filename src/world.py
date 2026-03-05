@@ -497,7 +497,7 @@ def _draw_bush_shadow(surface: pygame.Surface, sx: int, sy: int):
     surface.blit(sh, (sx, sy + T - 8))
 
 
-def _draw_farmhouse(surface: pygame.Surface, sx: int, sy: int, w: int, h: int):
+def _draw_farmhouse(surface: pygame.Surface, sx: int, sy: int, w: int, h: int, t: float = 0.0):
     """
     Draw the red Swedish farmhouse.
 
@@ -545,11 +545,27 @@ def _draw_farmhouse(surface: pygame.Surface, sx: int, sy: int, w: int, h: int):
     pygame.draw.rect(surface, _lighten(C_CHIMNEY, 12),
                      (chimney_x - 4, sy - chimney_h + 4, chimney_w + 8, 3))
     # Smoke puffs (alpha circles)
-    for ox, oy, r, a in [(2, -8, 8, 85), (6, -20, 6, 58), (2, -32, 5, 35)]:
-        sm = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
-        pygame.draw.circle(sm, (195, 190, 185, a), (r + 2, r + 2), r)
-        surface.blit(sm, (chimney_x + chimney_w // 2 + ox - r - 2,
-                          sy - chimney_h + oy - r - 2))
+    chimney_cx = chimney_x + chimney_w // 2
+    chimney_top = sy - chimney_h + 8
+    if t != 0.0:
+        # Animated smoke: 5 puffs cycling continuously
+        import math as _math
+        for i in range(5):
+            phase = (t * 0.35 + i * 0.2) % 1.0   # 0=just born, 1=gone
+            rise  = phase * 52                      # px risen above chimney top
+            drift = phase * 7 + _math.sin(t * 0.9 + i * 1.3) * 3
+            r     = int(5 + phase * 9)
+            a     = int(95 * (1.0 - phase))
+            sm = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(sm, (195, 190, 185, a), (r + 2, r + 2), r)
+            surface.blit(sm, (chimney_cx + int(drift) - r - 2,
+                              chimney_top - int(rise) - r - 2))
+    else:
+        for ox, oy, r, a in [(2, -8, 8, 85), (6, -20, 6, 58), (2, -32, 5, 35)]:
+            sm = pygame.Surface((r * 2 + 4, r * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(sm, (195, 190, 185, a), (r + 2, r + 2), r)
+            surface.blit(sm, (chimney_cx + ox - r - 2,
+                              chimney_top + oy - r - 2))
 
     # ---- Front wall ----
     wall_y = sy + roof_h

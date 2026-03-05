@@ -62,6 +62,8 @@ class UI:
         self.zoom_btn_plus   = None
         # Seed type selection rects — {CROP_TYPE: pygame.Rect} updated each frame
         self.seed_type_rects = {}
+        # Hotbar slot rects — {tool_id: pygame.Rect} updated each frame
+        self.hotbar_rects    = {}
 
     def draw(self, surface: pygame.Surface, player, world):
         """
@@ -302,9 +304,11 @@ class UI:
         _draw_panel(surface, bar_x - 8, bar_y - 8, total_w, slot_size + 24,
                     alpha=200)
 
+        self.hotbar_rects = {}
         for i, tool_id in enumerate([TOOL_HAND, TOOL_HOE, TOOL_WATER, TOOL_SEEDS]):
             sx = bar_x + i * (slot_size + gap)
             sy = bar_y
+            self.hotbar_rects[tool_id] = pygame.Rect(sx, sy, slot_size, slot_size)
 
             is_selected = (player.tool == tool_id)
 
