@@ -27,6 +27,9 @@ from src.settings import (
     C_HOUSE_RED, C_HOUSE_TRIM, C_UI_TEXT, C_UI_GOLD,
     C_FLAG_BLUE, C_FLAG_YELLOW, C_UI_BG, C_UI_BORDER,
     C_SKY_DAY, SAVE_FILE,
+    CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY, CROP_NAMES,
+    POTATO_SELL_PRICE, CARROT_SELL_PRICE, CORN_SELL_PRICE, STRAWBERRY_SELL_PRICE,
+    POTATO_SEED_PRICE, CARROT_SEED_PRICE, CORN_SEED_PRICE, STRAWBERRY_SEED_PRICE,
 )
 from src.world import (
     World,
@@ -74,8 +77,10 @@ class Game:
         # Animated decorations on the title screen
         self._title_timer = 0.0
 
-        # Screenshot button — top-right corner, always visible
-        self._screenshot_btn = pygame.Rect(SCREEN_WIDTH - 102, 6, 96, 26)
+        # Screenshot button — below the inventory panel (top-right), always visible
+        # Inventory panel: x = SCREEN_WIDTH-222, w = 210, h = 254, y = 12
+        # Panel bottom = 266; button sits 8px below with right edge flush to panel.
+        self._screenshot_btn = pygame.Rect(SCREEN_WIDTH - 108, 274, 96, 26)
 
         # Character creation state
         self._char_config  = CharacterConfig()
@@ -114,12 +119,20 @@ class Game:
                 if self._screenshot_btn.collidepoint(event.pos):
                     self._take_screenshot()
                 elif self.state == STATE_PLAYING and self.world:
-                    if (self.ui.zoom_btn_minus and
+                    if self.world.market_open:
+                        self._market_handle_click(event.pos)
+                    elif (self.ui.zoom_btn_minus and
                             self.ui.zoom_btn_minus.collidepoint(event.pos)):
                         self.world.zoom_out()
                     elif (self.ui.zoom_btn_plus and
                             self.ui.zoom_btn_plus.collidepoint(event.pos)):
                         self.world.zoom_in()
+                    else:
+                        # Seed type selection from inventory
+                        for ctype, rect in self.ui.seed_type_rects.items():
+                            if rect.collidepoint(event.pos):
+                                self.world.player.selected_seed = ctype
+                                break
                 elif self.state == STATE_CHARACTER_CREATION:
                     self._cc_handle_click(event.pos)
 
@@ -141,13 +154,17 @@ class Game:
         elif self.state == STATE_PLAYING and self.world is not None:
             self.world.draw(self.screen)
             self.ui.draw(self.screen, self.world.player, self.world)
-            self._draw_zoom_indicator()
+
+            if self.world.market_open:
+                self._draw_market_window()
 
         elif self.state == STATE_PAUSED:
             # Draw the world dimmed, then the pause overlay
             if self.world:
                 self.world.draw(self.screen)
                 self.ui.draw(self.screen, self.world.player, self.world)
+                if self.world.market_open:
+                    self._draw_market_window()
             self._draw_pause_overlay()
 
         # Screenshot button always drawn on top
@@ -183,7 +200,10 @@ class Game:
 
         elif self.state == STATE_PLAYING:
             if key == pygame.K_ESCAPE:
-                self.state = STATE_PAUSED
+                if self.world and self.world.market_open:
+                    self.world.market_open = False
+                else:
+                    self.state = STATE_PAUSED
             elif key == pygame.K_F5:
                 self._save_game()
                 self.world._add_notification("Game saved! (F5)")
@@ -198,43 +218,6 @@ class Game:
             elif key == pygame.K_q:
                 # Quit to title
                 self.state = STATE_TITLE
-
-    def _draw_zoom_indicator(self):
-        """
-        Draw five dots in the bottom-right corner showing the current zoom level.
-        Filled dots = zoomed in steps taken; hollow = steps remaining.
-        """
-        if self.world is None:
-            return
-        levels  = len(self.world._ZOOM_VIEWS)   # 5
-        current = self.world.zoom_level
-
-        dot_r   = 5
-        gap     = 14
-        total_w = levels * gap
-        x0 = SCREEN_WIDTH  - total_w - 12
-        y0 = SCREEN_HEIGHT - 22
-
-        # Background pill
-        pill = pygame.Rect(x0 - 6, y0 - 6, total_w + 6, dot_r * 2 + 10)
-        bg   = pygame.Surface(pill.size, pygame.SRCALPHA)
-        bg.fill((0, 0, 0, 110))
-        self.screen.blit(bg, pill.topleft)
-
-        for i in range(levels):
-            cx = x0 + i * gap + dot_r
-            cy = y0 + dot_r
-            if i < current:
-                # Filled — zoomed in this many steps
-                pygame.draw.circle(self.screen, (220, 185, 90), (cx, cy), dot_r)
-            else:
-                # Hollow — steps still available
-                pygame.draw.circle(self.screen, (120, 100, 55), (cx, cy), dot_r, 1)
-
-        # Scroll hint (only shown at default zoom so the player discovers the feature)
-        if current == 0:
-            hint = self.hint_font.render("scroll to zoom", True, (140, 120, 70))
-            self.screen.blit(hint, (x0 - hint.get_width() - 8, y0))
 
     def _draw_screenshot_btn(self):
         """Draw a small camera button in the top-right corner."""
@@ -284,9 +267,218 @@ class Game:
         if self.state == STATE_PLAYING and self.world:
             self.world._add_notification("Screenshot saved! (F12)")
 
+    # ------------------------------------------------------------------
+    # Market Window
+    # ------------------------------------------------------------------
+
+    def _draw_market_window(self):
+        """
+        Draw the market stall buy/sell popup window.
+        Rebuilds self._market_rects for click detection.
+        """
+        if not self.world:
+            return
+        world  = self.world
+        player = world.player
+        rects  = {}
+
+        CROP_LIST = [CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY]
+        SELL_PRICES = {
+            CROP_POTATO:     POTATO_SELL_PRICE,
+            CROP_CARROT:     CARROT_SELL_PRICE,
+            CROP_CORN:       CORN_SELL_PRICE,
+            CROP_STRAWBERRY: STRAWBERRY_SELL_PRICE,
+        }
+        SEED_PRICES = {
+            CROP_POTATO:     POTATO_SEED_PRICE,
+            CROP_CARROT:     CARROT_SEED_PRICE,
+            CROP_CORN:       CORN_SEED_PRICE,
+            CROP_STRAWBERRY: STRAWBERRY_SEED_PRICE,
+        }
+        DOT_COLS = {
+            CROP_POTATO:     (200, 158, 60),
+            CROP_CARROT:     (220, 105, 30),
+            CROP_CORN:       (235, 195, 45),
+            CROP_STRAWBERRY: (210, 45, 45),
+        }
+
+        # Dim the game world behind the window
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 140))
+        self.screen.blit(overlay, (0, 0))
+
+        pw, ph = 520, 360
+        px = SCREEN_WIDTH  // 2 - pw // 2
+        py = SCREEN_HEIGHT // 2 - ph // 2
+        _draw_panel(self.screen, px, py, pw, ph, alpha=245)
+
+        # Title
+        title = self.sub_font.render("Market Stall", True, C_UI_GOLD)
+        self.screen.blit(title, (px + pw // 2 - title.get_width() // 2, py + 10))
+
+        # Tab buttons
+        tab_w, tab_h = 120, 26
+        sell_tab_r = pygame.Rect(px + pw // 2 - tab_w - 4, py + 36, tab_w, tab_h)
+        buy_tab_r  = pygame.Rect(px + pw // 2 + 4,          py + 36, tab_w, tab_h)
+        rects["tab_sell"] = sell_tab_r
+        rects["tab_buy"]  = buy_tab_r
+        for tab_r, label, key in [(sell_tab_r, "Sell Crops", "sell"),
+                                   (buy_tab_r,  "Buy Seeds",  "buy")]:
+            active = (world.market_tab == key)
+            bg = (100, 78, 38) if active else (52, 42, 24)
+            bd = (200, 165, 65) if active else (110, 88, 46)
+            pygame.draw.rect(self.screen, bg, tab_r, border_radius=5)
+            pygame.draw.rect(self.screen, bd, tab_r, 2, border_radius=5)
+            ts = self.hint_font.render(label, True,
+                                       (240, 215, 100) if active else C_UI_TEXT)
+            self.screen.blit(ts, (tab_r.x + tab_r.w // 2 - ts.get_width() // 2,
+                                  tab_r.y + tab_r.h // 2 - ts.get_height() // 2))
+
+        # Content area
+        cy = py + 72
+        pad = 18
+        row_h = 46
+
+        if world.market_tab == "sell":
+            info = self.hint_font.render(
+                "Sell your harvested crops for gold.", True, (160, 140, 90))
+            self.screen.blit(info, (px + pad, cy))
+            cy += 20
+
+            for crop_type in CROP_LIST:
+                qty     = player.harvest.get(crop_type, 0)
+                price   = SELL_PRICES[crop_type]
+                name    = CROP_NAMES[crop_type]
+                dot_col = DOT_COLS[crop_type]
+                total   = qty * price
+
+                # Row background
+                row_rect = pygame.Rect(px + pad, cy, pw - pad * 2, row_h - 4)
+                if qty > 0:
+                    rb = pygame.Surface(row_rect.size, pygame.SRCALPHA)
+                    rb.fill((55, 42, 18, 80))
+                    self.screen.blit(rb, row_rect.topleft)
+                    pygame.draw.rect(self.screen, (100, 78, 38), row_rect, 1, border_radius=4)
+
+                # Dot + name + qty
+                pygame.draw.circle(self.screen, dot_col,
+                                   (px + pad + 12, cy + row_h // 2 - 4), 7)
+                pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
+                                   (px + pad + 10, cy + row_h // 2 - 6), 3)
+                name_s = self.sub_font.render(f"{name}", True, C_UI_TEXT)
+                self.screen.blit(name_s, (px + pad + 24, cy + 4))
+                qty_s = self.hint_font.render(f"× {qty}", True,
+                                              (200, 175, 90) if qty > 0 else (70, 58, 38))
+                self.screen.blit(qty_s, (px + pad + 24, cy + row_h // 2))
+
+                # Sell All button (only if qty > 0)
+                if qty > 0:
+                    btn_w, btn_h2 = 150, 26
+                    btn_x = px + pw - pad - btn_w
+                    btn_y = cy + (row_h - btn_h2) // 2 - 2
+                    btn_r = pygame.Rect(btn_x, btn_y, btn_w, btn_h2)
+                    rects[f"sell_{crop_type}"] = btn_r
+                    pygame.draw.rect(self.screen, (75, 110, 45), btn_r, border_radius=5)
+                    pygame.draw.rect(self.screen, (140, 195, 90), btn_r, 1, border_radius=5)
+                    lbl = self.hint_font.render(
+                        f"Sell All  →  {total}g", True, (200, 240, 150))
+                    self.screen.blit(lbl, (btn_x + btn_w // 2 - lbl.get_width() // 2,
+                                          btn_y + btn_h2 // 2 - lbl.get_height() // 2))
+                else:
+                    none_s = self.hint_font.render("(none harvested)", True, (65, 52, 32))
+                    none_w = pw - pad * 2 - 140
+                    self.screen.blit(none_s, (px + pad + 140, cy + row_h // 2 - 6))
+
+                cy += row_h
+
+        else:  # buy tab
+            info = self.hint_font.render(
+                "Buy seed packets to plant new crops.", True, (160, 140, 90))
+            self.screen.blit(info, (px + pad, cy))
+            cy += 20
+
+            for crop_type in CROP_LIST:
+                price   = SEED_PRICES[crop_type]
+                name    = CROP_NAMES[crop_type]
+                dot_col = DOT_COLS[crop_type]
+                owned   = player.seeds.get(crop_type, 0)
+                can_buy = player.gold >= price * 5
+
+                row_rect = pygame.Rect(px + pad, cy, pw - pad * 2, row_h - 4)
+                if can_buy:
+                    rb = pygame.Surface(row_rect.size, pygame.SRCALPHA)
+                    rb.fill((30, 55, 22, 80))
+                    self.screen.blit(rb, row_rect.topleft)
+                    pygame.draw.rect(self.screen, (70, 100, 40), row_rect, 1, border_radius=4)
+
+                pygame.draw.circle(self.screen, dot_col,
+                                   (px + pad + 12, cy + row_h // 2 - 4), 7)
+                pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
+                                   (px + pad + 10, cy + row_h // 2 - 6), 3)
+                name_s = self.sub_font.render(f"{name} Seeds", True, C_UI_TEXT)
+                self.screen.blit(name_s, (px + pad + 24, cy + 4))
+                own_s = self.hint_font.render(
+                    f"Have: {owned}  |  {price}g each", True, (160, 140, 90))
+                self.screen.blit(own_s, (px + pad + 24, cy + row_h // 2))
+
+                # Buy 5 button
+                btn_w, btn_h2 = 160, 26
+                btn_x = px + pw - pad - btn_w
+                btn_y = cy + (row_h - btn_h2) // 2 - 2
+                btn_r = pygame.Rect(btn_x, btn_y, btn_w, btn_h2)
+                rects[f"buy_{crop_type}"] = btn_r
+                if can_buy:
+                    pygame.draw.rect(self.screen, (48, 80, 105), btn_r, border_radius=5)
+                    pygame.draw.rect(self.screen, (100, 160, 205), btn_r, 1, border_radius=5)
+                    lbl = self.hint_font.render(
+                        f"Buy 5  →  {price*5}g", True, (160, 215, 255))
+                else:
+                    pygame.draw.rect(self.screen, (38, 32, 22), btn_r, border_radius=5)
+                    pygame.draw.rect(self.screen, (75, 60, 38), btn_r, 1, border_radius=5)
+                    lbl = self.hint_font.render(
+                        f"Buy 5  →  {price*5}g", True, (80, 70, 50))
+                self.screen.blit(lbl, (btn_x + btn_w // 2 - lbl.get_width() // 2,
+                                      btn_y + btn_h2 // 2 - lbl.get_height() // 2))
+
+                cy += row_h
+
+        # Footer: gold + close hint
+        footer_y = py + ph - 32
+        gold_s = self.sub_font.render(f"Gold: {player.gold}g", True, C_UI_GOLD)
+        self.screen.blit(gold_s, (px + pad, footer_y))
+        close_s = self.hint_font.render("ESC — Close", True, (160, 140, 90))
+        self.screen.blit(close_s,
+                         (px + pw - close_s.get_width() - pad, footer_y + 4))
+
+        self._market_rects = rects
+
+    def _market_handle_click(self, pos):
+        """Handle clicks inside the market window."""
+        if not self.world:
+            return
+        rects = getattr(self, "_market_rects", {})
+
+        if "tab_sell" in rects and rects["tab_sell"].collidepoint(pos):
+            self.world.market_tab = "sell"
+            return
+        if "tab_buy" in rects and rects["tab_buy"].collidepoint(pos):
+            self.world.market_tab = "buy"
+            return
+
+        for crop_type in [CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY]:
+            sell_key = f"sell_{crop_type}"
+            buy_key  = f"buy_{crop_type}"
+            if sell_key in rects and rects[sell_key].collidepoint(pos):
+                self.world.sell_harvest(crop_type)
+                return
+            if buy_key in rects and rects[buy_key].collidepoint(pos):
+                self.world.buy_seeds(crop_type, 5)
+                return
+
     def _start_new_game(self):
         """Create a fresh world and switch to the playing state."""
         self.world = World(char_config=self._char_config)
+        self._market_rects = {}
         self.state = STATE_PLAYING
 
     # ------------------------------------------------------------------
@@ -316,12 +508,13 @@ class Game:
             "time":      w._day_timer,
             "character": p.char_config.to_dict(),
             "player": {
-                "x":        p.x,
-                "y":        p.y,
-                "tool":     p.tool,
-                "seeds":    p.seeds,
-                "gold":     p.gold,
-                "potatoes": p.potatoes,
+                "x":             p.x,
+                "y":             p.y,
+                "tool":          p.tool,
+                "selected_seed": p.selected_seed,
+                "gold":          p.gold,
+                "seeds": {str(k): v for k, v in p.seeds.items()},
+                "harvest": {str(k): v for k, v in p.harvest.items()},
             },
             "crops": w.crop_mgr.to_dict(),
             "farm":  _serialize_farm(w.tilemap.farm),
@@ -359,14 +552,30 @@ class Game:
             w.time_of_day  = (w._day_timer % 240) / 240
 
             pd = data.get("player", {})
-            p.x        = float(pd.get("x",        p.x))
-            p.y        = float(pd.get("y",        p.y))
-            p.tool     = int(  pd.get("tool",     p.tool))
-            p.seeds    = int(  pd.get("seeds",    p.seeds))
-            p.gold     = int(  pd.get("gold",     p.gold))
-            p.potatoes = int(  pd.get("potatoes", p.potatoes))
-            p.rect.x   = int(p.x)
-            p.rect.y   = int(p.y)
+            p.x             = float(pd.get("x",    p.x))
+            p.y             = float(pd.get("y",    p.y))
+            p.tool          = int(  pd.get("tool", p.tool))
+            p.selected_seed = int(  pd.get("selected_seed", CROP_POTATO))
+            p.gold          = int(  pd.get("gold", p.gold))
+            p.rect.x        = int(p.x)
+            p.rect.y        = int(p.y)
+            # Seeds dict — keys stored as strings in JSON
+            raw_seeds = pd.get("seeds", {})
+            if isinstance(raw_seeds, dict):
+                for k, v in raw_seeds.items():
+                    p.seeds[int(k)] = int(v)
+            else:
+                # Backwards compat: old save had a single int
+                p.seeds[CROP_POTATO] = int(raw_seeds)
+            # Harvest dict
+            raw_harvest = pd.get("harvest", {})
+            if isinstance(raw_harvest, dict):
+                for k, v in raw_harvest.items():
+                    p.harvest[int(k)] = int(v)
+            else:
+                # Backwards compat: old save had "potatoes" int
+                old_pot = int(pd.get("potatoes", 0))
+                p.harvest[CROP_POTATO] = old_pot
 
             w.crop_mgr.from_dict(data.get("crops", {}))
             _deserialize_farm(w.tilemap.farm, data.get("farm", {}))

@@ -34,7 +34,9 @@ from src.settings import (
     C_FLAG_BLUE, C_FLAG_YELLOW, C_POLE,
     C_SKY_NIGHT, C_SKY_DAWN, C_SKY_DAY, C_SKY_DUSK,
     C_NIGHT_OVERLAY,
-    POTATO_SELL_PRICE,
+    POTATO_SELL_PRICE, CARROT_SELL_PRICE, CORN_SELL_PRICE, STRAWBERRY_SELL_PRICE,
+    CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY,
+    TOOL_HAND,
 )
 from src.tilemap import TileMap
 from src.crops   import CropManager
@@ -87,10 +89,13 @@ class World:
         # Pre-build the list of tree positions so they don't change
         self._trees = _build_tree_list()
 
-        # Pre-build the sell-zone rectangle (a small market stall near the house)
-        # Player walks on it with potatoes to sell them
+        # Market stall position (2×2 tile visual, drawn at this anchor)
         self._sell_zone_col = HOUSE_COL + HOUSE_COLS + 1
         self._sell_zone_row = HOUSE_ROW + HOUSE_ROWS - 2
+
+        # Market window state — opened when player uses TOOL_HAND near the stall
+        self.market_open = False
+        self.market_tab  = "sell"   # "sell" or "buy"
 
     # ------------------------------------------------------------------
     # Update
@@ -122,8 +127,9 @@ class World:
         for msg in msg_list:
             self._add_notification(msg)
 
-        # -- Check sell zone --
-        self._check_sell_zone()
+        # -- Check if player just interacted with the market stall --
+        if not self.market_open:
+            self._check_market_trigger()
 
         # -- Camera follows player --
         # Keep camera viewport in sync with current zoom level
@@ -148,32 +154,59 @@ class World:
 
         self._add_notification(f"Day {self.day_number} begins!")
 
-    def _check_sell_zone(self):
+    def _check_market_trigger(self):
         """
-        If the player is standing adjacent to the market stall with potatoes,
-        automatically sell them.  The stall tiles are solid so the player stops
-        in front; we use a one-tile proximity border to detect that position.
+        Open the market window when the player uses any tool facing the stall.
+        The stall occupies cols _sell_zone_col / _sell_zone_col+1,
+        rows _sell_zone_row / _sell_zone_row+1.
         """
-        if self.player.potatoes <= 0:
+        ltu = self.player.last_tool_use
+        if ltu is None:
             return
+        tc, tr = ltu[1], ltu[2]
+        sc, sr = self._sell_zone_col, self._sell_zone_row
+        # Open market if the target tile is within 1 tile of the stall footprint
+        if sc - 1 <= tc <= sc + 2 and sr - 1 <= tr <= sr + 2:
+            self.market_open = True
+            self._add_notification("Market stall — buy seeds or sell crops!")
 
-        sz_x = self._sell_zone_col * TILE_SIZE
-        sz_y = self._sell_zone_row * TILE_SIZE
-        # Expand the stall footprint by one tile on every side so the sell
-        # triggers when the player is standing right next to the stall.
-        trigger_rect = pygame.Rect(
-            sz_x - TILE_SIZE,
-            sz_y - TILE_SIZE,
-            TILE_SIZE * 4,
-            TILE_SIZE * 4,
-        )
+    def sell_harvest(self, crop_type: int):
+        """Sell all harvested crops of the given type. Called from the market window."""
+        qty = self.player.harvest.get(crop_type, 0)
+        if qty <= 0:
+            return
+        prices = {
+            CROP_POTATO:     POTATO_SELL_PRICE,
+            CROP_CARROT:     CARROT_SELL_PRICE,
+            CROP_CORN:       CORN_SELL_PRICE,
+            CROP_STRAWBERRY: STRAWBERRY_SELL_PRICE,
+        }
+        earned = qty * prices.get(crop_type, 0)
+        self.player.harvest[crop_type] = 0
+        self.player.gold += earned
+        from src.settings import CROP_NAMES
+        name = CROP_NAMES.get(crop_type, "crop")
+        self._add_notification(f"Sold {qty} {name.lower()}s for {earned}g!")
 
-        if self.player.rect.colliderect(trigger_rect):
-            earned = self.player.potatoes * POTATO_SELL_PRICE
-            self.player.gold     += earned
-            msg = f"Sold {self.player.potatoes} potatoes for {earned} gold!"
-            self.player.potatoes  = 0
-            self._add_notification(msg)
+    def buy_seeds(self, crop_type: int, qty: int = 5):
+        """Buy qty seeds of the given crop type. Called from the market window."""
+        from src.settings import (CROP_NAMES,
+            POTATO_SEED_PRICE, CARROT_SEED_PRICE,
+            CORN_SEED_PRICE, STRAWBERRY_SEED_PRICE)
+        prices = {
+            CROP_POTATO:     POTATO_SEED_PRICE,
+            CROP_CARROT:     CARROT_SEED_PRICE,
+            CROP_CORN:       CORN_SEED_PRICE,
+            CROP_STRAWBERRY: STRAWBERRY_SEED_PRICE,
+        }
+        cost = prices.get(crop_type, 0) * qty
+        if self.player.gold < cost:
+            self._add_notification(f"Not enough gold! (need {cost}g)")
+            return
+        self.player.gold -= cost
+        self.player.seeds[crop_type] = self.player.seeds.get(crop_type, 0) + qty
+        name = CROP_NAMES.get(crop_type, "seed")
+        self._add_notification(f"Bought {qty} {name.lower()} seeds for {cost}g!")
 
     def _add_notification(self, message: str, duration: float = 3.0):
         """Add a message to the on-screen notification queue (shown for 3 s)."""
@@ -190,6 +223,46 @@ class World:
     def zoom_out(self):
         """Step one zoom level further away (scroll down)."""
         self.zoom_level = max(0, self.zoom_level - 1)
+
+    def _draw_tool_target(self, surface: pygame.Surface):
+        """
+        Draw a pulsing coloured outline on the tile the current tool will affect.
+        Colour varies by tool: brown=hoe, blue=water, green=seeds, gold=hand.
+        Only shown when the target tile is on screen.
+        """
+        from src.settings import TOOL_HOE, TOOL_WATER, TOOL_SEEDS, TOOL_HAND
+        col, row = self.player.get_tool_target()
+        wx = col * TILE_SIZE
+        wy = row * TILE_SIZE
+        if not self.camera.is_visible(wx, wy, TILE_SIZE, TILE_SIZE):
+            return
+        sx, sy = self.camera.apply(wx, wy)
+        sx, sy = int(sx), int(sy)
+
+        # Pulsing alpha
+        pulse = abs(math.sin(self._day_timer * 4.0))
+        alpha = int(55 + 70 * pulse)
+
+        tool = self.player.tool
+        if tool == TOOL_HOE:
+            tint = (175, 110, 45, alpha)
+        elif tool == TOOL_WATER:
+            tint = (70, 155, 225, alpha)
+        elif tool == TOOL_SEEDS:
+            tint = (75, 205, 65, alpha)
+        else:
+            tint = (225, 210, 130, alpha)
+
+        hl = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        # Fill with very faint tint
+        hl.fill((*tint[:3], alpha // 4))
+        # Bright pulsing border
+        pygame.draw.rect(hl, tint, (0, 0, TILE_SIZE, TILE_SIZE), 3)
+        # Corner dots for extra readability
+        dot_col = (*tint[:3], min(255, alpha + 60))
+        for dx, dy in [(0,0),(TILE_SIZE-4,0),(0,TILE_SIZE-4),(TILE_SIZE-4,TILE_SIZE-4)]:
+            pygame.draw.rect(hl, dot_col, (dx, dy, 4, 4))
+        surface.blit(hl, (sx, sy))
 
     # ------------------------------------------------------------------
     # Draw
@@ -233,6 +306,9 @@ class World:
 
         # 4. Crops
         self.crop_mgr.draw(target, self.camera)
+
+        # 4b. Tool target highlight (shows which tile the equipped tool will affect)
+        self._draw_tool_target(target)
 
         # 5a. Tree/bush drop shadows (drawn before canopy so they appear on ground)
         for (col, row, kind) in self._trees:
@@ -764,33 +840,25 @@ def _draw_sell_zone(surface: pygame.Surface, sx: int, sy: int):
         pygame.draw.polygon(surface, _lighten(fringe_col, 18),
                             [(fx + 2, fringe_y), (fx + fw // 2, fringe_y + 6), (fx + fw - 2, fringe_y)])
 
-    # ---- Hanging sign on left post ----
+    # ---- Hanging sign on left post (shows "Market" text via dots) ----
     sgn_x = sx + 16
     sgn_y = sy - T + 10
-    sgn_w, sgn_h = 38, 26
-    # Hanging cord
+    sgn_w, sgn_h = 38, 22
     pygame.draw.line(surface, (90, 62, 26), (sgn_x + sgn_w // 2, sgn_y - 5), (sgn_x + sgn_w // 2, sy - T + 8), 2)
-    # Board shadow
     pygame.draw.rect(surface, _darken((152, 108, 46), 20), (sgn_x + 2, sgn_y + 2, sgn_w, sgn_h), border_radius=3)
-    # Board
     pygame.draw.rect(surface, (152, 108, 46), (sgn_x, sgn_y, sgn_w, sgn_h), border_radius=3)
     pygame.draw.rect(surface, _lighten((152, 108, 46), 22), (sgn_x + 2, sgn_y + 2, sgn_w - 4, 3), border_radius=2)
     pygame.draw.rect(surface, (190, 148, 72), (sgn_x, sgn_y, sgn_w, sgn_h), 2, border_radius=3)
-    # Potato icon on sign
-    pc = sgn_x + sgn_w // 2
-    py_ = sgn_y + sgn_h // 2 + 2
-    pygame.draw.ellipse(surface, _darken((162, 118, 50), 20), (pc - 10, py_ - 6, 20, 14))
-    pygame.draw.ellipse(surface, (162, 118, 50),              (pc - 10, py_ - 7, 20, 13))
-    pygame.draw.ellipse(surface, _lighten((162, 118, 50), 30),(pc - 7,  py_ - 6, 9,  5))
-    # Small sprout on top of potato icon
-    pygame.draw.line(surface, (55, 140, 38), (pc, py_ - 7), (pc, py_ - 12), 2)
-    pygame.draw.ellipse(surface, (70, 165, 48), (pc - 4, py_ - 14, 5, 4))
-    pygame.draw.ellipse(surface, (70, 165, 48), (pc,     py_ - 14, 5, 4))
-    # Gold coin on sign (price indicator)
+    # Four tiny crop-colour dots representing the 4 crop types
+    crop_dot_cols = [(162, 118, 50), (220, 110, 30), (235, 195, 45), (215, 40, 40)]
+    for di, dc_ in enumerate(crop_dot_cols):
+        pygame.draw.circle(surface, dc_, (sgn_x + 7 + di * 8, sgn_y + sgn_h // 2 + 2), 3)
+        pygame.draw.circle(surface, _lighten(dc_, 35), (sgn_x + 6 + di * 8, sgn_y + sgn_h // 2 + 1), 1)
+    # Coin on sign
     coin_col = (220, 185, 50)
-    pygame.draw.circle(surface, _darken(coin_col, 18), (sgn_x + sgn_w - 8, sgn_y + 8), 6)
-    pygame.draw.circle(surface, coin_col,               (sgn_x + sgn_w - 9, sgn_y + 7), 6)
-    pygame.draw.circle(surface, _lighten(coin_col, 28), (sgn_x + sgn_w - 11, sgn_y + 5), 3)
+    pygame.draw.circle(surface, _darken(coin_col, 18), (sgn_x + sgn_w - 7, sgn_y + 8), 6)
+    pygame.draw.circle(surface, coin_col,               (sgn_x + sgn_w - 8, sgn_y + 7), 6)
+    pygame.draw.circle(surface, _lighten(coin_col, 28), (sgn_x + sgn_w - 10, sgn_y + 5), 3)
 
     # ---- Table ----
     tbl_y    = sy + T // 2
@@ -810,27 +878,38 @@ def _draw_sell_zone(surface: pygame.Surface, sx: int, sy: int):
     for lx in (sx + 10, sx + W - 17):
         pygame.draw.rect(surface, leg_col, (lx, tbl_y + tbl_h + 12, 7, T // 2 - 4))
 
-    # ---- Potato pile on the table ----
+    # ---- Four crop displays on the table ----
+    # Potato pile (left section)
     pot_col = (162, 118, 50)
-    pot_hi  = _lighten(pot_col, 35)
-    pot_sh  = _darken(pot_col, 28)
-    for px, py2, pr in [
-        (sx + T - 12, tbl_y - 10, 10),
-        (sx + T + 2,  tbl_y - 8,   9),
-        (sx + T - 22, tbl_y - 6,   8),
-        (sx + T + 14, tbl_y - 7,   9),
-        (sx + T - 6,  tbl_y - 18,  8),
-    ]:
-        pygame.draw.circle(surface, pot_sh,  (px + 2, py2 + 3), pr)
-        pygame.draw.circle(surface, pot_col, (px,     py2),     pr)
-        pygame.draw.circle(surface, pot_hi,  (px - 3, py2 - 3), pr // 3 + 1)
+    for px, py2, pr in [(sx+8, tbl_y-8, 7),(sx+16, tbl_y-6, 7),(sx+12, tbl_y-14, 6)]:
+        pygame.draw.circle(surface, _darken(pot_col, 28), (px+2, py2+2), pr)
+        pygame.draw.circle(surface, pot_col,               (px,   py2),   pr)
+        pygame.draw.circle(surface, _lighten(pot_col, 35), (px-2, py2-2), pr//3+1)
+    # Carrot (orange root shapes)
+    car_col = (215, 100, 25)
+    for cx_, cy_ in [(sx+32, tbl_y-5),(sx+38, tbl_y-9),(sx+34, tbl_y-13)]:
+        pygame.draw.ellipse(surface, _darken(car_col, 20), (cx_, cy_, 6, 10))
+        pygame.draw.ellipse(surface, car_col,               (cx_-1, cy_-1, 6, 10))
+        pygame.draw.line(surface, (65, 155, 42), (cx_+2, cy_-1), (cx_+3, cy_-6), 2)
+    # Corn (golden kernels)
+    corn_col = (240, 200, 50)
+    for cx_, cy_, cw, ch in [(sx+55, tbl_y-12, 7, 14),(sx+63, tbl_y-10, 7, 14)]:
+        pygame.draw.rect(surface, _darken(corn_col, 22), (cx_+1, cy_+1, cw, ch), border_radius=3)
+        pygame.draw.rect(surface, corn_col,               (cx_,   cy_,   cw, ch), border_radius=3)
+        pygame.draw.rect(surface, _lighten(corn_col, 30), (cx_+1, cy_+1, cw-2, 4), border_radius=2)
+    # Strawberries (red with cap)
+    berry_c = (215, 40, 40)
+    for bx_, by_ in [(sx+82, tbl_y-8),(sx+88, tbl_y-13),(sx+78, tbl_y-14)]:
+        pygame.draw.circle(surface, _darken(berry_c, 25), (bx_+1, by_+2), 5)
+        pygame.draw.circle(surface, berry_c,               (bx_,   by_),   5)
+        pygame.draw.circle(surface, _lighten(berry_c, 40), (bx_-2, by_-2), 2)
+        pygame.draw.ellipse(surface, (55, 140, 35), (bx_-3, by_-6, 7, 4))
 
-    # ---- Gold coin pile beside potatoes ----
-    for cx_, cy_, cr in [(sx + W - 20, tbl_y - 9, 7), (sx + W - 17, tbl_y - 5, 7),
-                          (sx + W - 23, tbl_y - 5, 6)]:
-        pygame.draw.circle(surface, _darken(coin_col, 22), (cx_ + 1, cy_ + 1), cr)
-        pygame.draw.circle(surface, coin_col,               (cx_,     cy_),     cr)
-        pygame.draw.circle(surface, _lighten(coin_col, 30), (cx_ - 2, cy_ - 2), cr // 3 + 1)
+    # ---- Gold coin pile (right side) ----
+    for cx_, cy_, cr in [(sx+W-20, tbl_y-9, 7),(sx+W-17, tbl_y-5, 7),(sx+W-23, tbl_y-5, 6)]:
+        pygame.draw.circle(surface, _darken(coin_col, 22), (cx_+1, cy_+1), cr)
+        pygame.draw.circle(surface, coin_col,               (cx_,   cy_),   cr)
+        pygame.draw.circle(surface, _lighten(coin_col, 30), (cx_-2, cy_-2), cr//3+1)
 
 
 # ---------------------------------------------------------------------------

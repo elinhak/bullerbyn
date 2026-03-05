@@ -96,10 +96,62 @@ POTATO_DAYS_MATURE  = 4    # ready to harvest after 4 days
 POTATO_SELL_PRICE = 25     # gold coins earned per harvested potato
 
 # ---------------------------------------------------------------------------
+# Crop Types
+# ---------------------------------------------------------------------------
+CROP_POTATO     = 0
+CROP_CARROT     = 1
+CROP_CORN       = 2
+CROP_STRAWBERRY = 3
+
+CROP_NAMES = {
+    CROP_POTATO:     "Potato",
+    CROP_CARROT:     "Carrot",
+    CROP_CORN:       "Corn",
+    CROP_STRAWBERRY: "Strawberry",
+}
+
+# ---------------------------------------------------------------------------
+# Crops — Carrot  (grows slower than potato)
+# ---------------------------------------------------------------------------
+# Grow time properties are defined here in settings.py.
+# The actual stage-advancement logic lives in src/crops.py → Crop.advance_day()
+CARROT_DAYS_SPROUT  = 2    # days until tiny green shoots appear
+CARROT_DAYS_GROWING = 4    # days until feathery tops are visible
+CARROT_DAYS_MATURE  = 6    # days until carrot body is ready
+
+CARROT_SELL_PRICE   = 40   # gold per harvested carrot
+
+# ---------------------------------------------------------------------------
+# Crops — Corn  (grows slower than carrot)
+# ---------------------------------------------------------------------------
+CORN_DAYS_SPROUT    = 3
+CORN_DAYS_GROWING   = 6
+CORN_DAYS_MATURE    = 9
+
+CORN_SELL_PRICE     = 60   # gold per harvested corn
+
+# ---------------------------------------------------------------------------
+# Crops — Strawberry  (grows slowest)
+# ---------------------------------------------------------------------------
+STRAWBERRY_DAYS_SPROUT  = 3
+STRAWBERRY_DAYS_GROWING = 7
+STRAWBERRY_DAYS_MATURE  = 12
+
+STRAWBERRY_SELL_PRICE   = 90   # gold per harvested strawberry
+
+# ---------------------------------------------------------------------------
+# Seed buy prices (purchased at the market stall)
+# ---------------------------------------------------------------------------
+POTATO_SEED_PRICE     = 15
+CARROT_SEED_PRICE     = 25
+CORN_SEED_PRICE       = 40
+STRAWBERRY_SEED_PRICE = 65
+
+# ---------------------------------------------------------------------------
 # Inventory / Items
 # ---------------------------------------------------------------------------
-STARTING_GOLD       = 50
-STARTING_SEEDS      = 20
+STARTING_GOLD       = 0    # start with nothing — earn through farming!
+STARTING_SEEDS      = 5    # potato seeds given at the start
 
 # Tool IDs — these match the hotbar slot numbers (1-4 keys on keyboard)
 TOOL_HAND     = 0   # pick up items, interact

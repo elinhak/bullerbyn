@@ -23,6 +23,7 @@ from src.settings import (
     PLAYER_START_COL, PLAYER_START_ROW,
     TOOL_HAND, TOOL_HOE, TOOL_WATER, TOOL_SEEDS,
     STARTING_GOLD, STARTING_SEEDS,
+    CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY, CROP_NAMES,
     C_HOUSE_TRIM, C_TREE_TRUNK, C_GRASS_1,
 )
 from src.tilemap import TileMap, FS_DRY, FS_TILLED, FS_WATERED, FS_NONE
@@ -138,10 +139,27 @@ class Player:
         # Currently equipped tool
         self.tool = TOOL_HAND
 
-        # Inventory
-        self.seeds    = STARTING_SEEDS
-        self.gold     = STARTING_GOLD
-        self.potatoes = 0
+        # Inventory — seeds per crop type
+        self.seeds = {
+            CROP_POTATO:     STARTING_SEEDS,
+            CROP_CARROT:     0,
+            CROP_CORN:       0,
+            CROP_STRAWBERRY: 0,
+        }
+        # Currently selected seed type (used by TOOL_SEEDS)
+        self.selected_seed = CROP_POTATO
+
+        # Harvested crops awaiting sale at the market stall
+        self.harvest = {
+            CROP_POTATO:     0,
+            CROP_CARROT:     0,
+            CROP_CORN:       0,
+            CROP_STRAWBERRY: 0,
+        }
+        self.gold = STARTING_GOLD
+
+        # Exposed for World to read after each update tick
+        self.last_tool_use = None   # (tool_id, target_col, target_row) or None
 
         # Animation state
         self._walk_timer  = 0.0    # accumulates time for leg-swing animation
@@ -155,6 +173,14 @@ class Player:
     # Update — called every frame
     # ------------------------------------------------------------------
 
+    def get_tool_target(self) -> tuple:
+        """Return (col, row) of the tile the current tool will affect."""
+        cx = int((self.x + PLAYER_SIZE / 2) // TILE_SIZE)
+        cy = int((self.y + PLAYER_SIZE / 2) // TILE_SIZE)
+        offsets = {DIR_DOWN: (0, 1), DIR_UP: (0, -1), DIR_LEFT: (-1, 0), DIR_RIGHT: (1, 0)}
+        dc, dr = offsets[self.direction]
+        return cx + dc, cy + dr
+
     def update(self, dt: float, tilemap: TileMap, crop_mgr, notifications):
         """
         dt          — seconds since the last frame
@@ -162,6 +188,7 @@ class Player:
         crop_mgr    — the CropManager (for planting/harvesting)
         notifications — list to append message strings to (for UI display)
         """
+        self.last_tool_use = None   # reset each frame
         self._handle_movement(dt, tilemap)
         self._handle_tool_selection()
 
@@ -287,43 +314,30 @@ class Player:
     def _use_tool(self, tilemap: TileMap, crop_mgr, notifications: list):
         """
         Apply the currently held tool to the tile the player is facing.
-
-        The "target tile" is the tile immediately in front of the player
-        in the direction they are facing.
+        Records the action in self.last_tool_use for World to inspect.
         """
-        # Find the tile the player is standing in
-        cx = int((self.x + PLAYER_SIZE / 2) // TILE_SIZE)
-        cy = int((self.y + PLAYER_SIZE / 2) // TILE_SIZE)
-
-        # The target tile is one step in the facing direction
-        offsets = {
-            DIR_DOWN:  (0, 1),
-            DIR_UP:    (0, -1),
-            DIR_LEFT:  (-1, 0),
-            DIR_RIGHT: (1, 0),
-        }
-        dc, dr = offsets[self.direction]
-        target_col = cx + dc
-        target_row = cy + dr
+        target_col, target_row = self.get_tool_target()
+        self.last_tool_use = (self.tool, target_col, target_row)
 
         farm_state = tilemap.get_farm_state(target_col, target_row)
         has_crop   = crop_mgr.has_crop(target_col, target_row)
 
-        # --- HAND: harvest mature crops ---
+        # --- HAND: harvest mature crops (or interact — World checks stall) ---
         if self.tool == TOOL_HAND:
             if has_crop:
                 crop = crop_mgr.get_crop(target_col, target_row)
                 if crop.is_ready():
-                    qty = crop_mgr.harvest(target_col, target_row)
+                    qty, crop_type = crop_mgr.harvest(target_col, target_row)
                     if qty > 0:
-                        self.potatoes += qty
+                        self.harvest[crop_type] = self.harvest.get(crop_type, 0) + qty
                         tilemap.set_farm_state(target_col, target_row, FS_TILLED)
-                        notifications.append(f"Harvested {qty} potatoes!")
+                        name = CROP_NAMES.get(crop_type, "crop")
+                        notifications.append(f"Harvested {qty} {name.lower()}s!")
                 else:
-                    days_left = max(0, 6 - crop.age_days)
+                    _, _, d_mature = _get_grow_times(crop.crop_type)
+                    days_left = max(0, d_mature - crop.age_days)
                     notifications.append(f"Not ready yet — {days_left} day(s) to go.")
-            else:
-                notifications.append("Nothing to pick up here.")
+            # (stall interaction is handled by World._check_market_trigger)
 
         # --- HOE: till dry soil ---
         elif self.tool == TOOL_HOE:
@@ -351,16 +365,19 @@ class Player:
             else:
                 notifications.append("No tilled soil here.")
 
-        # --- SEEDS: plant on tilled (or watered) soil ---
+        # --- SEEDS: plant selected seed type on tilled (or watered) soil ---
         elif self.tool == TOOL_SEEDS:
-            if self.seeds <= 0:
-                notifications.append("You have no seeds left!")
+            seed_count = self.seeds.get(self.selected_seed, 0)
+            name = CROP_NAMES.get(self.selected_seed, "seed")
+            if seed_count <= 0:
+                notifications.append(f"No {name.lower()} seeds — buy some at the market!")
             elif has_crop:
                 notifications.append("There is already something growing here.")
             elif farm_state in (FS_TILLED, FS_WATERED):
-                if crop_mgr.plant(target_col, target_row):
-                    self.seeds -= 1
-                    notifications.append(f"Planted a potato seed! ({self.seeds} seeds left)")
+                if crop_mgr.plant(target_col, target_row, self.selected_seed):
+                    self.seeds[self.selected_seed] -= 1
+                    left = self.seeds[self.selected_seed]
+                    notifications.append(f"Planted {name.lower()} seed! ({left} left)")
             elif farm_state == FS_DRY:
                 notifications.append("Till the soil first (press 2 to select Hoe).")
             else:
@@ -372,20 +389,45 @@ class Player:
 
     def draw(self, surface: pygame.Surface, camera):
         """
-        Draw the player at their current world position, converted to screen
-        coordinates using the camera.
+        Draw the player at their current world position.
+        The character is rendered 2× larger than the 32-px collision box,
+        making the visual height roughly 2/3 the height of the farmhouse door.
         """
         sx, sy = camera.apply(self.x, self.y)
-        self._draw_character(surface, int(sx), int(sy), self.direction,
-                             self._anim_frame, self._is_moving)
+
+        # Render into a (48, 54) buffer with padding so hat/arms don't clip,
+        # then scale to (96, 108) and blit aligned to the collision box.
+        buf = pygame.Surface((48, 54), pygame.SRCALPHA)
+        # buf_sx=8, buf_sy=16 → hat top at buf y=1, shoe bottom at buf y=49
+        _draw_character_gfx(buf, 8, 16, self.direction, self._anim_frame, self.char_config)
+        scaled = pygame.transform.scale(buf, (96, 108))
+        # Center on collision box and align shoe bottom with collision bottom
+        surface.blit(scaled, (int(sx) - 32, int(sy) - 66))
 
     def _draw_character(self, surface, sx, sy, direction, frame, moving):
-        """
-        Draw a detailed top-down pixel-art character (32×32 px collision box).
-        Rendered with layered shading: shadow → legs → body → arms → head → hat.
-        Uses self.char_config for shirt/pants colours, hat visibility, and sex.
-        """
+        """Legacy wrapper — calls _draw_character_gfx directly (used internally)."""
         _draw_character_gfx(surface, sx, sy, direction, frame, self.char_config)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _get_grow_times(crop_type: int) -> tuple:
+    """Return (sprout_days, growing_days, mature_days) for a crop type."""
+    from src.settings import (
+        POTATO_DAYS_SPROUT, POTATO_DAYS_GROWING, POTATO_DAYS_MATURE,
+        CARROT_DAYS_SPROUT, CARROT_DAYS_GROWING, CARROT_DAYS_MATURE,
+        CORN_DAYS_SPROUT,   CORN_DAYS_GROWING,   CORN_DAYS_MATURE,
+        STRAWBERRY_DAYS_SPROUT, STRAWBERRY_DAYS_GROWING, STRAWBERRY_DAYS_MATURE,
+    )
+    table = {
+        CROP_POTATO:     (POTATO_DAYS_SPROUT, POTATO_DAYS_GROWING, POTATO_DAYS_MATURE),
+        CROP_CARROT:     (CARROT_DAYS_SPROUT, CARROT_DAYS_GROWING, CARROT_DAYS_MATURE),
+        CROP_CORN:       (CORN_DAYS_SPROUT,   CORN_DAYS_GROWING,   CORN_DAYS_MATURE),
+        CROP_STRAWBERRY: (STRAWBERRY_DAYS_SPROUT, STRAWBERRY_DAYS_GROWING, STRAWBERRY_DAYS_MATURE),
+    }
+    return table.get(crop_type, (1, 2, 4))
 
 
 # ---------------------------------------------------------------------------

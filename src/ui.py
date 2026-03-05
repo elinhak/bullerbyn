@@ -24,6 +24,7 @@ from src.settings import (
     C_UI_SELECT, C_UI_SLOT,
     C_FLAG_BLUE, C_FLAG_YELLOW,
     C_HOUSE_RED, C_HOUSE_TRIM,
+    CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY, CROP_NAMES,
 )
 
 # Tool icon colours (each tool has a distinct colour so you can recognise it)
@@ -57,8 +58,10 @@ class UI:
                 continue
 
         # Zoom button rects — set each frame by _draw_inventory, read by game.py
-        self.zoom_btn_minus = None
-        self.zoom_btn_plus  = None
+        self.zoom_btn_minus  = None
+        self.zoom_btn_plus   = None
+        # Seed type selection rects — {CROP_TYPE: pygame.Rect} updated each frame
+        self.seed_type_rects = {}
 
     def draw(self, surface: pygame.Surface, player, world):
         """
@@ -123,50 +126,126 @@ class UI:
     def _draw_inventory(self, surface: pygame.Surface, player, world):
         """
         Draw the inventory panel in the top-right corner.
-        Shows: gold coins, potato seeds remaining, harvested potatoes,
-        and a zoom +/- control with level dots below.
+
+        Shows:
+          - Gold
+          - Seeds section (per crop type — click to select active seed)
+          - Harvest section (per crop type collected)
+          - Zoom control
         """
-        panel_w = 200
-        panel_h = 118   # extra 32 px for the zoom row
+        # Crop metadata: (crop_type, dot_colour, label)
+        CROP_META = [
+            (CROP_POTATO,     (200, 158, 60),  "Potato"),
+            (CROP_CARROT,     (220, 105, 30),  "Carrot"),
+            (CROP_CORN,       (235, 195, 45),  "Corn"),
+            (CROP_STRAWBERRY, (210, 45, 45),   "Strawberry"),
+        ]
+
+        panel_w = 210
         panel_x = SCREEN_WIDTH - panel_w - 12
         panel_y = 12
 
+        # Calculate panel height dynamically
+        row_h = 18
+        panel_h = (22                       # gold row
+                   + 10 + 14               # seeds header + divider
+                   + len(CROP_META) * row_h  # seed rows
+                   + 10 + 14               # harvest header + divider
+                   + len(CROP_META) * row_h  # harvest rows
+                   + 40)                   # zoom section
         _draw_panel(surface, panel_x, panel_y, panel_w, panel_h)
 
-        items = [
-            ("Gold",     f"{player.gold}",     C_UI_GOLD,       (220, 185, 55)),
-            ("Seeds",    f"{player.seeds}",    C_UI_GREEN,      (105, 190, 70)),
-            ("Potatoes", f"{player.potatoes}", (200, 162, 82),  (185, 145, 60)),
-        ]
-        for i, (label, val, text_col, dot_col) in enumerate(items):
-            iy = panel_y + 10 + i * 22
-            # Coloured dot icon
-            pygame.draw.circle(surface, dot_col,      (panel_x + 14, iy + 8), 6)
-            pygame.draw.circle(surface, (255, 255, 255, 80), (panel_x + 12, iy + 6), 2)
-            _blit_text(surface, self.font_medium, f"{label}:",
-                       panel_x + 26, iy, C_UI_TEXT)
-            val_w = self.font_medium.size(val)[0]
-            _blit_text(surface, self.font_medium, val,
-                       panel_x + panel_w - val_w - 10, iy, text_col)
+        iy = panel_y + 8
+
+        # ---- Gold row ----
+        pygame.draw.circle(surface, (220, 185, 55), (panel_x + 14, iy + 7), 6)
+        pygame.draw.circle(surface, (255, 240, 140), (panel_x + 12, iy + 5), 2)
+        _blit_text(surface, self.font_medium, "Gold:", panel_x + 26, iy, C_UI_TEXT)
+        val = str(player.gold)
+        val_w = self.font_medium.size(val)[0]
+        _blit_text(surface, self.font_medium, val,
+                   panel_x + panel_w - val_w - 8, iy, C_UI_GOLD)
+        iy += 22
+
+        # ---- Seeds section ----
+        pygame.draw.line(surface, C_UI_BORDER,
+                         (panel_x + 6, iy), (panel_x + panel_w - 6, iy), 1)
+        sec_lbl = self.font_small.render("── Seeds (click to select) ──", True, (130, 108, 65))
+        surface.blit(sec_lbl, (panel_x + panel_w // 2 - sec_lbl.get_width() // 2, iy + 2))
+        iy += 14
+
+        self.seed_type_rects = {}
+        for crop_type, dot_col, name in CROP_META:
+            count = player.seeds.get(crop_type, 0)
+            is_selected = (player.selected_seed == crop_type)
+            is_active   = (player.tool == TOOL_SEEDS)
+            row_rect = pygame.Rect(panel_x + 4, iy - 1, panel_w - 8, row_h)
+
+            # Highlight row if this is the selected seed type (and seeds tool active)
+            if is_selected and is_active:
+                sel_bg = pygame.Surface((panel_w - 8, row_h), pygame.SRCALPHA)
+                sel_bg.fill((110, 88, 38, 90))
+                surface.blit(sel_bg, row_rect.topleft)
+                pygame.draw.rect(surface, (180, 145, 55), row_rect, 1, border_radius=3)
+            elif is_selected:
+                sel_bg = pygame.Surface((panel_w - 8, row_h), pygame.SRCALPHA)
+                sel_bg.fill((80, 65, 28, 60))
+                surface.blit(sel_bg, row_rect.topleft)
+
+            # Selection arrow
+            arr_col = (230, 200, 80) if is_selected else (60, 50, 30)
+            _blit_text(surface, self.font_small, "▶" if is_selected else " ",
+                       panel_x + 6, iy, arr_col)
+
+            pygame.draw.circle(surface, dot_col,          (panel_x + 20, iy + 7), 5)
+            pygame.draw.circle(surface, _add(dot_col, 40), (panel_x + 18, iy + 5), 2)
+            lbl_col = (230, 205, 90) if is_selected else C_UI_TEXT
+            _blit_text(surface, self.font_small, f"{name}:", panel_x + 28, iy + 1, lbl_col)
+            val = str(count)
+            val_w = self.font_small.size(val)[0]
+            cnt_col = (230, 205, 90) if (is_selected and count > 0) else (
+                       C_UI_TEXT if count > 0 else (80, 65, 42))
+            _blit_text(surface, self.font_small, val,
+                       panel_x + panel_w - val_w - 8, iy + 1, cnt_col)
+            self.seed_type_rects[crop_type] = row_rect
+            iy += row_h
+
+        # ---- Harvest section ----
+        pygame.draw.line(surface, C_UI_BORDER,
+                         (panel_x + 6, iy), (panel_x + panel_w - 6, iy), 1)
+        sec_lbl2 = self.font_small.render("── Harvest ──", True, (130, 108, 65))
+        surface.blit(sec_lbl2, (panel_x + panel_w // 2 - sec_lbl2.get_width() // 2, iy + 2))
+        iy += 14
+
+        for crop_type, dot_col, name in CROP_META:
+            qty = player.harvest.get(crop_type, 0)
+            pygame.draw.circle(surface, dot_col,          (panel_x + 14, iy + 7), 5)
+            pygame.draw.circle(surface, _add(dot_col, 40), (panel_x + 12, iy + 5), 2)
+            _blit_text(surface, self.font_small, f"{name}:", panel_x + 24, iy + 1, C_UI_TEXT)
+            val = str(qty)
+            val_w = self.font_small.size(val)[0]
+            cnt_col = (220, 195, 100) if qty > 0 else (70, 58, 38)
+            _blit_text(surface, self.font_small, val,
+                       panel_x + panel_w - val_w - 8, iy + 1, cnt_col)
+            iy += row_h
 
         # ---- Zoom control row ----
-        divider_y = panel_y + 80
         pygame.draw.line(surface, C_UI_BORDER,
-                         (panel_x + 8, divider_y), (panel_x + panel_w - 8, divider_y), 1)
-        zoom_lbl = self.font_small.render("Zoom", True, (140, 118, 72))
-        surface.blit(zoom_lbl, (panel_x + panel_w // 2 - zoom_lbl.get_width() // 2, divider_y - 8))
+                         (panel_x + 6, iy), (panel_x + panel_w - 6, iy), 1)
+        zoom_lbl = self.font_small.render("── Zoom ──", True, (130, 108, 65))
+        surface.blit(zoom_lbl, (panel_x + panel_w // 2 - zoom_lbl.get_width() // 2, iy + 2))
+        iy += 14
 
-        btn_y  = divider_y + 8
+        btn_y  = iy
         btn_w  = 26
         btn_h  = 22
         zoom   = world.zoom_level
-        levels = len(world._ZOOM_VIEWS)   # 5
+        levels = len(world._ZOOM_VIEWS)
 
-        # Minus button
         minus_r = pygame.Rect(panel_x + 8, btn_y, btn_w, btn_h)
         can_out  = zoom > 0
         mb_col   = (70, 55, 32) if can_out else (40, 32, 20)
-        pygame.draw.rect(surface, mb_col,   minus_r, border_radius=4)
+        pygame.draw.rect(surface, mb_col,      minus_r, border_radius=4)
         pygame.draw.rect(surface, C_UI_BORDER, minus_r, 1, border_radius=4)
         lbl_col  = C_UI_TEXT if can_out else (80, 65, 42)
         _blit_text(surface, self.font_medium, "−",
@@ -174,11 +253,10 @@ class UI:
                    minus_r.y + 2, lbl_col)
         self.zoom_btn_minus = minus_r
 
-        # Plus button
         plus_r  = pygame.Rect(panel_x + panel_w - 8 - btn_w, btn_y, btn_w, btn_h)
         can_in   = zoom < levels - 1
         pb_col   = (70, 55, 32) if can_in else (40, 32, 20)
-        pygame.draw.rect(surface, pb_col,   plus_r, border_radius=4)
+        pygame.draw.rect(surface, pb_col,      plus_r, border_radius=4)
         pygame.draw.rect(surface, C_UI_BORDER, plus_r, 1, border_radius=4)
         lbl_col  = C_UI_TEXT if can_in else (80, 65, 42)
         _blit_text(surface, self.font_medium, "+",
@@ -186,7 +264,6 @@ class UI:
                    plus_r.y + 2, lbl_col)
         self.zoom_btn_plus = plus_r
 
-        # Zoom level dots between the buttons
         dot_area_x  = minus_r.right + 4
         dot_area_w  = plus_r.left - minus_r.right - 8
         dot_spacing = dot_area_w // levels
@@ -318,9 +395,9 @@ class UI:
         Useful for new players learning the controls.
         """
         hints = [
-            "WASD / Arrows: Move",
-            "1-4: Select tool",
-            "SPACE / E: Use tool",
+            "WASD / Arrows: Move  |  1-4: Select tool",
+            "SPACE / E: Use tool  |  Click seeds to switch type",
+            "Market stall: SPACE near stall to buy/sell",
         ]
         x = 12
         y = SCREEN_HEIGHT - len(hints) * 18 - 10
