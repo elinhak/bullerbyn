@@ -41,6 +41,7 @@ from src.ui    import UI, _draw_panel, _blit_text
 from src.player import (
     CharacterConfig, SHIRT_COLORS, PANTS_COLORS, draw_character_preview,
 )
+from src.assets import Assets
 
 # Game state constants
 STATE_TITLE              = "title"
@@ -67,6 +68,9 @@ class Game:
 
         # Clock for delta-time — we keep one here and pass dt to world.update
         self._clock = pygame.time.Clock()
+
+        # Load image assets (PNG sprites); falls back to drawn graphics if missing
+        Assets.load()
 
         # Load font for the title screen
         pygame.font.init()
@@ -374,16 +378,23 @@ class Game:
                     self.screen.blit(rb, row_rect.topleft)
                     pygame.draw.rect(self.screen, (100, 78, 38), row_rect, 1, border_radius=4)
 
-                # Dot + name + qty
-                pygame.draw.circle(self.screen, dot_col,
-                                   (px + pad + 12, cy + row_h // 2 - 4), 7)
-                pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
-                                   (px + pad + 10, cy + row_h // 2 - 6), 3)
+                # Icon + name + qty
+                _icon = Assets.get("potato_mature") if crop_type == CROP_POTATO else None
+                if _icon:
+                    icon = pygame.transform.scale(_icon, (32, 32))
+                    self.screen.blit(icon, (px + pad, cy + 7))
+                    text_x = px + pad + 36
+                else:
+                    pygame.draw.circle(self.screen, dot_col,
+                                       (px + pad + 12, cy + row_h // 2 - 4), 7)
+                    pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
+                                       (px + pad + 10, cy + row_h // 2 - 6), 3)
+                    text_x = px + pad + 24
                 name_s = self.sub_font.render(f"{name}", True, C_UI_TEXT)
-                self.screen.blit(name_s, (px + pad + 24, cy + 4))
+                self.screen.blit(name_s, (text_x, cy + 4))
                 qty_s = self.hint_font.render(f"× {qty}", True,
                                               (200, 175, 90) if qty > 0 else (70, 58, 38))
-                self.screen.blit(qty_s, (px + pad + 24, cy + row_h // 2))
+                self.screen.blit(qty_s, (text_x, cy + row_h // 2))
 
                 # Sell All button (only if qty > 0)
                 if qty > 0:
@@ -416,7 +427,7 @@ class Game:
                 name    = CROP_NAMES[crop_type]
                 dot_col = DOT_COLS[crop_type]
                 owned   = player.seeds.get(crop_type, 0)
-                can_buy = player.gold >= price * 5
+                can_buy = player.gold >= price
 
                 row_rect = pygame.Rect(px + pad, cy, pw - pad * 2, row_h - 4)
                 if can_buy:
@@ -425,17 +436,24 @@ class Game:
                     self.screen.blit(rb, row_rect.topleft)
                     pygame.draw.rect(self.screen, (70, 100, 40), row_rect, 1, border_radius=4)
 
-                pygame.draw.circle(self.screen, dot_col,
-                                   (px + pad + 12, cy + row_h // 2 - 4), 7)
-                pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
-                                   (px + pad + 10, cy + row_h // 2 - 6), 3)
+                _icon = Assets.get("potato_mature") if crop_type == CROP_POTATO else None
+                if _icon:
+                    icon = pygame.transform.scale(_icon, (32, 32))
+                    self.screen.blit(icon, (px + pad, cy + 7))
+                    text_x = px + pad + 36
+                else:
+                    pygame.draw.circle(self.screen, dot_col,
+                                       (px + pad + 12, cy + row_h // 2 - 4), 7)
+                    pygame.draw.circle(self.screen, tuple(min(255,c+40) for c in dot_col),
+                                       (px + pad + 10, cy + row_h // 2 - 6), 3)
+                    text_x = px + pad + 24
                 name_s = self.sub_font.render(f"{name} Seeds", True, C_UI_TEXT)
-                self.screen.blit(name_s, (px + pad + 24, cy + 4))
+                self.screen.blit(name_s, (text_x, cy + 4))
                 own_s = self.hint_font.render(
                     f"Have: {owned}  |  {price}g each", True, (160, 140, 90))
-                self.screen.blit(own_s, (px + pad + 24, cy + row_h // 2))
+                self.screen.blit(own_s, (text_x, cy + row_h // 2))
 
-                # Buy 5 button
+                # Buy 1 button
                 btn_w, btn_h2 = 160, 26
                 btn_x = px + pw - pad - btn_w
                 btn_y = cy + (row_h - btn_h2) // 2 - 2
@@ -445,12 +463,12 @@ class Game:
                     pygame.draw.rect(self.screen, (48, 80, 105), btn_r, border_radius=5)
                     pygame.draw.rect(self.screen, (100, 160, 205), btn_r, 1, border_radius=5)
                     lbl = self.hint_font.render(
-                        f"Buy 5  →  {price*5}g", True, (160, 215, 255))
+                        f"Buy 1  →  {price}g", True, (160, 215, 255))
                 else:
                     pygame.draw.rect(self.screen, (38, 32, 22), btn_r, border_radius=5)
                     pygame.draw.rect(self.screen, (75, 60, 38), btn_r, 1, border_radius=5)
                     lbl = self.hint_font.render(
-                        f"Buy 5  →  {price*5}g", True, (80, 70, 50))
+                        f"Buy 1  →  {price}g", True, (80, 70, 50))
                 self.screen.blit(lbl, (btn_x + btn_w // 2 - lbl.get_width() // 2,
                                       btn_y + btn_h2 // 2 - lbl.get_height() // 2))
 
@@ -486,7 +504,7 @@ class Game:
                 self.world.sell_harvest(crop_type)
                 return
             if buy_key in rects and rects[buy_key].collidepoint(pos):
-                self.world.buy_seeds(crop_type, 5)
+                self.world.buy_seeds(crop_type, 1)
                 return
 
     def _start_new_game(self):

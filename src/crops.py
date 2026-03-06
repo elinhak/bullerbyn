@@ -24,6 +24,7 @@ Summary of grow times (in in-game days):
 """
 
 import pygame
+from src.assets import Assets
 from src.settings import (
     TILE_SIZE,
     CROP_POTATO, CROP_CARROT, CROP_CORN, CROP_STRAWBERRY,
@@ -97,6 +98,14 @@ class Crop:
         T  = TILE_SIZE
         cx = int(screen_x + T // 2)
         cy = int(screen_y + T // 2)
+
+        # Check for a PNG sprite override first
+        asset_key = _ASSET_KEYS.get((self.crop_type, self.stage))
+        if asset_key:
+            img = Assets.get(asset_key)
+            if img:
+                surface.blit(img, (int(screen_x), int(screen_y)))
+                return
 
         draw_fn = _DRAW_TABLE.get((self.crop_type, self.stage))
         if draw_fn:
@@ -398,6 +407,15 @@ def _strawberry_mature(surface, cx, cy, T):
 
 
 # ---------------------------------------------------------------------------
+# Asset key lookup: (crop_type, stage) → Assets key (None = use drawn fallback)
+# ---------------------------------------------------------------------------
+_ASSET_KEYS = {
+    (CROP_POTATO, STAGE_SEED):    "potato_seed",
+    (CROP_POTATO, STAGE_SPROUT):  "potato_sprout",
+    (CROP_POTATO, STAGE_GROWING): "potato_growing",
+    (CROP_POTATO, STAGE_MATURE):  "potato_mature",
+}
+
 # Dispatch table: (crop_type, stage) → draw function
 # ---------------------------------------------------------------------------
 _DRAW_TABLE = {
