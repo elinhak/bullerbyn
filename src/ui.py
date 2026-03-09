@@ -339,7 +339,11 @@ class UI:
             badge_surf = pygame.Surface((14, 14), pygame.SRCALPHA)
             pygame.draw.circle(badge_surf, (*C_UI_BG, 190), (7, 7), 7)
             surface.blit(badge_surf, (sx + 3, sy + 3))
-            _blit_text(surface, self.font_small, str(i + 1), sx + 6, sy + 4, key_col)
+            lbl = str(i + 1)
+            lw, lh = self.font_small.size(lbl)
+            # Circle centre on screen is (sx+10, sy+10); centre text within it
+            _blit_text(surface, self.font_small, lbl,
+                       sx + 10 - lw // 2, sy + 10 - lh // 2, key_col)
 
             # Tool icon
             icon_x = sx + slot_size // 2
